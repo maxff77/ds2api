@@ -41,7 +41,7 @@ func ParseToolCallsDetailed(text string, availableToolNames []string) ToolCallPa
 			continue
 		}
 		parsed := tc
-		calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
+		calls, rejectedNames := filterToolCallsDetailed(parsed)
 		result.Calls = calls
 		result.RejectedToolNames = rejectedNames
 		result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
@@ -77,7 +77,7 @@ func ParseToolCallsDetailed(text string, availableToolNames []string) ToolCallPa
 		result.SawToolCallSyntax = true
 	}
 
-	calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
+	calls, rejectedNames := filterToolCallsDetailed(parsed)
 	result.Calls = calls
 	result.RejectedToolNames = rejectedNames
 	result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
@@ -108,7 +108,7 @@ func ParseStandaloneToolCallsDetailed(text string, availableToolNames []string) 
 			continue
 		}
 		result.SawToolCallSyntax = true
-		calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
+		calls, rejectedNames := filterToolCallsDetailed(parsed)
 		result.Calls = calls
 		result.RejectedToolNames = rejectedNames
 		result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
@@ -143,14 +143,14 @@ func ParseStandaloneToolCallsDetailed(text string, availableToolNames []string) 
 		}
 	}
 	result.SawToolCallSyntax = true
-	calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
+	calls, rejectedNames := filterToolCallsDetailed(parsed)
 	result.Calls = calls
 	result.RejectedToolNames = rejectedNames
 	result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
 	return result
 }
 
-func filterToolCallsDetailed(parsed []ParsedToolCall, availableToolNames []string) ([]ParsedToolCall, []string) {
+func filterToolCallsDetailed(parsed []ParsedToolCall) ([]ParsedToolCall, []string) {
 	out := make([]ParsedToolCall, 0, len(parsed))
 	for _, tc := range parsed {
 		if tc.Name == "" {

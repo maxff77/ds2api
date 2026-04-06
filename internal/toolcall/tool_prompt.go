@@ -46,24 +46,33 @@ When calling tools, emit ONLY raw XML at the very end of your response. No text 
 </tool_calls>
 
 RULES:
-1) Output ONLY the XML above when calling tools. Do NOT mix tool XML with regular text.
-2) <parameters> MUST contain a strict JSON object. All JSON keys and strings use double quotes.
-3) Multiple tools → multiple <tool_call> blocks inside ONE <tool_calls> root.
-4) Do NOT wrap the XML in markdown code fences (no triple backticks).
-5) After receiving a tool result, use it directly. Only call another tool if the result is insufficient.
-6) Parameters MUST use the exact field names from the selected tool schema.
-7) CRITICAL: Do NOT invent or add any extra fields (such as "_raw", "_xml"). Use ONLY the fields strictly defined in the schema. Extra fields will cause execution failure.
+1) When calling tools, you MUST use the <tool_calls> XML format.
+2) No text is allowed AFTER the XML block.
+3) <parameters> MUST be a single-line strict JSON object. Use double quotes.
+4) Multiple tools must be inside the same <tool_calls> root.
+5) Do NOT wrap XML in markdown fences (` + "```" + `).
+6) Do NOT invent parameters. Use only the provided schema.
+7) CRITICAL: Do NOT use native tool markers like "<｜Tool｜>" or "<｜tool｜>".
+8) CRITICAL: Do NOT output role markers like "<｜System｜>", "<｜User｜>", or "<｜Assistant｜>".
+9) CRITICAL: Do NOT output internal monologues (e.g. "I will list files now..."). Just output your answer or the XML.
 
 ❌ WRONG — Do NOT do these:
-Wrong 1 — mixed text and XML:
-  I'll read the file for you. <tool_calls><tool_call>...
-Wrong 2 — describing tool calls in text:
-  [调用 Bash] {"command": "ls"}
+Wrong 1 — mixed text after XML:
+  <tool_calls>...</tool_calls> I hope this helps.
+Wrong 2 — function-call syntax:
+  Grep({"pattern": "token"})
 Wrong 3 — missing <tool_calls> wrapper:
   <tool_call><tool_name>` + ex1 + `</tool_name><parameters>{}</parameters></tool_call>
-Wrong 4 — extra/invented fields:
-  <parameters>{"_raw": "...", "command": "ls"}</parameters>
+Wrong 4 — Markdown code fences:
+  ` + "```xml" + `
+  <tool_calls>...</tool_calls>
+  ` + "```" + `
+Wrong 5 — native tool tokens:
+  <｜Tool｜>call_some_tool{"param":1}<｜Tool｜>
+Wrong 6 — role markers in response:
+  <｜Assistant｜> Here is the result...
 
+Remember: The ONLY valid way to use tools is the <tool_calls> XML block at the end of your response.
 
 ✅ CORRECT EXAMPLES:
 
