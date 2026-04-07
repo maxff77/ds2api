@@ -126,6 +126,40 @@ func TestDeleteProxyClearsAssignedAccountProxyID(t *testing.T) {
 	}
 }
 
+func TestUpdateProxyResponseDoesNotExposeStoredPassword(t *testing.T) {
+	h := newAdminProxyTestHandler(t, `{
+		"proxies":[{"id":"proxy-1","name":"Node 1","type":"socks5h","host":"127.0.0.1","port":1080,"username":"u","password":"secret"}]
+	}`)
+
+	r := chi.NewRouter()
+	r.Put("/admin/proxies/{proxyID}", h.updateProxy)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/proxies/proxy-1", bytes.NewBufferString(`{
+		"name":"Node 1",
+		"type":"socks5h",
+		"host":"127.0.0.2",
+		"port":1081,
+		"username":"u2"
+	}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	proxy, _ := payload["proxy"].(map[string]any)
+	if _, exists := proxy["password"]; exists {
+		t.Fatalf("response should not expose password, got %#v", proxy)
+	}
+	if hasPassword, _ := proxy["has_password"].(bool); !hasPassword {
+		t.Fatalf("expected has_password=true, got %#v", proxy)
+	}
+}
+
 func TestUpdateAccountProxyAssignsProxyID(t *testing.T) {
 	h := newAdminProxyTestHandler(t, `{
 		"proxies":[{"id":"proxy-1","name":"Node 1","type":"socks5h","host":"127.0.0.1","port":1080}],

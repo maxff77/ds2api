@@ -27,6 +27,19 @@ func validateProxyMutation(cfg *config.Config) error {
 	return config.ValidateAccountProxyReferences(cfg.Accounts, cfg.Proxies)
 }
 
+func proxyResponse(proxy config.Proxy) map[string]any {
+	proxy = config.NormalizeProxy(proxy)
+	return map[string]any{
+		"id":           proxy.ID,
+		"name":         proxy.Name,
+		"type":         proxy.Type,
+		"host":         proxy.Host,
+		"port":         proxy.Port,
+		"username":     proxy.Username,
+		"has_password": strings.TrimSpace(proxy.Password) != "",
+	}
+}
+
 func (h *Handler) listProxies(w http.ResponseWriter, _ *http.Request) {
 	proxies := h.Store.Snapshot().Proxies
 	items := make([]map[string]any, 0, len(proxies))
@@ -57,7 +70,7 @@ func (h *Handler) addProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "proxy": proxy})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "proxy": proxyResponse(proxy)})
 }
 
 func (h *Handler) updateProxy(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +105,7 @@ func (h *Handler) updateProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "proxy": proxy})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "proxy": proxyResponse(proxy)})
 }
 
 func (h *Handler) deleteProxy(w http.ResponseWriter, r *http.Request) {
