@@ -39,6 +39,11 @@ func parseToolCallsDetailedXMLOnly(text string) ToolCallParseResult {
 		return result
 	}
 	result.SawToolCallSyntax = looksLikeToolCallSyntax(trimmed)
+	trimmed = stripFencedCodeBlocks(trimmed)
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return result
+	}
 
 	parsed := parseXMLToolCalls(trimmed)
 	if len(parsed) == 0 {
@@ -82,4 +87,56 @@ func looksLikeToolCallSyntax(text string) bool {
 		strings.Contains(lower, "<ask_followup_question") ||
 		strings.Contains(lower, "<new_task") ||
 		strings.Contains(lower, "<result")
+}
+
+func stripFencedCodeBlocks(text string) string {
+	if text == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+
+	lines := strings.SplitAfter(text, "\n")
+	inFence := false
+	fenceMarker := ""
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !inFence {
+			if marker, ok := parseFenceOpen(trimmed); ok {
+				inFence = true
+				fenceMarker = marker
+				continue
+			}
+			b.WriteString(line)
+			continue
+		}
+
+		if isFenceClose(trimmed, fenceMarker) {
+			inFence = false
+			fenceMarker = ""
+		}
+	}
+
+	if inFence {
+		return ""
+	}
+	return b.String()
+}
+
+func parseFenceOpen(line string) (string, bool) {
+	if strings.HasPrefix(line, "```") {
+		return "```", true
+	}
+	if strings.HasPrefix(line, "~~~") {
+		return "~~~", true
+	}
+	return "", false
+}
+
+func isFenceClose(line, marker string) bool {
+	if marker == "" || !strings.HasPrefix(line, marker) {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, marker))
+	return rest == ""
 }
