@@ -164,7 +164,12 @@ func (s *Store) AutoDeleteSessions() bool {
 }
 
 func (s *Store) HistorySplitEnabled() bool {
-	return true
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.HistorySplit.Enabled == nil {
+		return false
+	}
+	return *s.cfg.HistorySplit.Enabled
 }
 
 func (s *Store) HistorySplitTriggerAfterTurns() int {
@@ -174,4 +179,38 @@ func (s *Store) HistorySplitTriggerAfterTurns() int {
 		return 1
 	}
 	return *s.cfg.HistorySplit.TriggerAfterTurns
+}
+
+func (s *Store) CurrentInputFileEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	historySplitEnabled := s.cfg.HistorySplit.Enabled != nil && *s.cfg.HistorySplit.Enabled
+	if historySplitEnabled {
+		return false
+	}
+	if s.cfg.CurrentInputFile.Enabled == nil {
+		return true
+	}
+	return *s.cfg.CurrentInputFile.Enabled
+}
+
+func (s *Store) CurrentInputFileMinChars() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.CurrentInputFile.MinChars
+}
+
+func (s *Store) ThinkingInjectionEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.ThinkingInjection.Enabled == nil {
+		return true
+	}
+	return *s.cfg.ThinkingInjection.Enabled
+}
+
+func (s *Store) ThinkingInjectionPrompt() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cfg.ThinkingInjection.Prompt)
 }

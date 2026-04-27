@@ -52,7 +52,7 @@ func (h *Handler) proxyViaOpenAI(w http.ResponseWriter, r *http.Request, store C
 		}
 	}
 	translatedReq := translatorcliproxy.ToOpenAI(sdktranslator.FormatClaude, translateModel, raw, stream)
-	translatedReq = applyClaudeThinkingPolicyToOpenAIRequest(translatedReq, req)
+	translatedReq, exposeThinking := applyClaudeThinkingPolicyToOpenAIRequest(translatedReq, req, stream)
 
 	isVercelPrepare := strings.TrimSpace(r.URL.Query().Get("__stream_prepare")) == "1"
 	isVercelRelease := strings.TrimSpace(r.URL.Query().Get("__stream_release")) == "1"
@@ -118,23 +118,26 @@ func (h *Handler) proxyViaOpenAI(w http.ResponseWriter, r *http.Request, store C
 		return true
 	}
 	converted := translatorcliproxy.FromOpenAINonStream(sdktranslator.FormatClaude, model, raw, translatedReq, body)
+	if !exposeThinking {
+		converted = stripClaudeThinkingBlocks(converted)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(converted)
 	return true
 }
 
-func applyClaudeThinkingPolicyToOpenAIRequest(translated []byte, original map[string]any) []byte {
+func applyClaudeThinkingPolicyToOpenAIRequest(translated []byte, original map[string]any, stream bool) ([]byte, bool) {
 	req := map[string]any{}
 	if err := json.Unmarshal(translated, &req); err != nil {
-		return translated
+		return translated, false
 	}
 	enabled, ok := util.ResolveThinkingOverride(original)
 	if !ok {
 		if _, translatedHasOverride := util.ResolveThinkingOverride(req); translatedHasOverride {
-			return translated
+			return translated, false
 		}
-		enabled = false
+		enabled = !stream
 	}
 	typ := "disabled"
 	if enabled {
@@ -143,7 +146,33 @@ func applyClaudeThinkingPolicyToOpenAIRequest(translated []byte, original map[st
 	req["thinking"] = map[string]any{"type": typ}
 	out, err := json.Marshal(req)
 	if err != nil {
-		return translated
+		return translated, ok && enabled
+	}
+	return out, ok && enabled
+}
+
+func stripClaudeThinkingBlocks(raw []byte) []byte {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	content, _ := payload["content"].([]any)
+	if len(content) == 0 {
+		return raw
+	}
+	filtered := make([]any, 0, len(content))
+	for _, item := range content {
+		block, _ := item.(map[string]any)
+		blockType, _ := block["type"].(string)
+		if strings.TrimSpace(blockType) == "thinking" {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	payload["content"] = filtered
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return raw
 	}
 	return out
 }

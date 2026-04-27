@@ -6,21 +6,22 @@ import (
 )
 
 type State struct {
-	pending               strings.Builder
-	capture               strings.Builder
-	capturing             bool
-	codeFenceStack        []int
-	codeFencePendingTicks int
-	codeFenceLineStart    bool
-	pendingToolRaw        string
-	pendingToolCalls      []toolcall.ParsedToolCall
-	disableDeltas         bool
-	toolNameSent          bool
-	toolName              string
-	toolArgsStart         int
-	toolArgsSent          int
-	toolArgsString        bool
-	toolArgsDone          bool
+	pending                strings.Builder
+	capture                strings.Builder
+	capturing              bool
+	codeFenceStack         []int
+	codeFencePendingTicks  int
+	codeFencePendingTildes int
+	codeFenceNotLineStart  bool // inverted: zero-value false means "at line start"
+	pendingToolRaw         string
+	pendingToolCalls       []toolcall.ParsedToolCall
+	disableDeltas          bool
+	toolNameSent           bool
+	toolName               string
+	toolArgsStart          int
+	toolArgsSent           int
+	toolArgsString         bool
+	toolArgsDone           bool
 }
 
 type Event struct {
@@ -63,7 +64,8 @@ func insideCodeFenceWithState(state *State, text string) bool {
 	simulated := simulateCodeFenceState(
 		state.codeFenceStack,
 		state.codeFencePendingTicks,
-		state.codeFenceLineStart,
+		state.codeFencePendingTildes,
+		!state.codeFenceNotLineStart,
 		text,
 	)
 	return len(simulated.stack) > 0
@@ -73,7 +75,7 @@ func insideCodeFence(text string) bool {
 	if text == "" {
 		return false
 	}
-	return len(simulateCodeFenceState(nil, 0, true, text).stack) > 0
+	return len(simulateCodeFenceState(nil, 0, 0, true, text).stack) > 0
 }
 
 func updateCodeFenceState(state *State, text string) {
@@ -83,43 +85,65 @@ func updateCodeFenceState(state *State, text string) {
 	next := simulateCodeFenceState(
 		state.codeFenceStack,
 		state.codeFencePendingTicks,
-		state.codeFenceLineStart,
+		state.codeFencePendingTildes,
+		!state.codeFenceNotLineStart,
 		text,
 	)
 	state.codeFenceStack = next.stack
 	state.codeFencePendingTicks = next.pendingTicks
-	state.codeFenceLineStart = next.lineStart
+	state.codeFencePendingTildes = next.pendingTildes
+	state.codeFenceNotLineStart = !next.lineStart
 }
 
 type codeFenceSimulation struct {
-	stack        []int
-	pendingTicks int
-	lineStart    bool
+	stack         []int
+	pendingTicks  int
+	pendingTildes int
+	lineStart     bool
 }
 
-func simulateCodeFenceState(stack []int, pendingTicks int, lineStart bool, text string) codeFenceSimulation {
+func simulateCodeFenceState(stack []int, pendingTicks, pendingTildes int, lineStart bool, text string) codeFenceSimulation {
 	chunk := text
 	nextStack := append([]int(nil), stack...)
 	ticks := pendingTicks
+	tildes := pendingTildes
 	atLineStart := lineStart
 
-	flushTicks := func() {
+	flushPending := func() {
 		if ticks > 0 {
 			if atLineStart && ticks >= 3 {
-				applyFenceMarker(&nextStack, ticks)
+				applyFenceMarker(&nextStack, ticks) // positive = backtick
 			}
 			atLineStart = false
 			ticks = 0
+		}
+		if tildes > 0 {
+			if atLineStart && tildes >= 3 {
+				applyFenceMarker(&nextStack, -tildes) // negative = tilde
+			}
+			atLineStart = false
+			tildes = 0
 		}
 	}
 
 	for i := 0; i < len(chunk); i++ {
 		ch := chunk[i]
 		if ch == '`' {
+			if tildes > 0 {
+				// Mixed chars — flush tildes first.
+				flushPending()
+			}
 			ticks++
 			continue
 		}
-		flushTicks()
+		if ch == '~' {
+			if ticks > 0 {
+				flushPending()
+			}
+			tildes++
+			continue
+		}
+		flushPending()
 		switch ch {
 		case '\n', '\r':
 			atLineStart = true
@@ -134,24 +158,43 @@ func simulateCodeFenceState(stack []int, pendingTicks int, lineStart bool, text 
 	}
 
 	return codeFenceSimulation{
-		stack:        nextStack,
-		pendingTicks: ticks,
-		lineStart:    atLineStart,
+		stack:         nextStack,
+		pendingTicks:  ticks,
+		pendingTildes: tildes,
+		lineStart:     atLineStart,
 	}
 }
 
-func applyFenceMarker(stack *[]int, ticks int) {
-	if stack == nil || ticks <= 0 {
+// applyFenceMarker pushes or pops a fence marker on the stack.
+// Positive values represent backtick fences, negative represent tilde fences.
+// A closing marker must match the sign (type) of the opening marker.
+func applyFenceMarker(stack *[]int, marker int) {
+	if stack == nil || marker == 0 {
 		return
 	}
 	if len(*stack) == 0 {
-		*stack = append(*stack, ticks)
+		*stack = append(*stack, marker)
 		return
 	}
 	top := (*stack)[len(*stack)-1]
-	if ticks >= top {
+	// Signs must match: backtick closes backtick, tilde closes tilde.
+	sameType := (top > 0 && marker > 0) || (top < 0 && marker < 0)
+	if !sameType {
+		// Different fence type — treat as nested.
+		*stack = append(*stack, marker)
+		return
+	}
+	absMarker := marker
+	absTop := top
+	if absMarker < 0 {
+		absMarker = -absMarker
+	}
+	if absTop < 0 {
+		absTop = -absTop
+	}
+	if absMarker >= absTop {
 		*stack = (*stack)[:len(*stack)-1]
 		return
 	}
-	*stack = append(*stack, ticks)
+	*stack = append(*stack, marker)
 }

@@ -58,11 +58,28 @@ func TestGetSettingsIncludesHistorySplitDefaults(t *testing.T) {
 	var body map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
 	historySplit, _ := body["history_split"].(map[string]any)
-	if got := boolFrom(historySplit["enabled"]); !got {
-		t.Fatalf("expected history_split.enabled=true, body=%v", body)
+	if got := boolFrom(historySplit["enabled"]); got {
+		t.Fatalf("expected history_split.enabled=false, body=%v", body)
 	}
 	if got := intFrom(historySplit["trigger_after_turns"]); got != 1 {
 		t.Fatalf("expected history_split.trigger_after_turns=1, got %d body=%v", got, body)
+	}
+	currentInputFile, _ := body["current_input_file"].(map[string]any)
+	if got := boolFrom(currentInputFile["enabled"]); !got {
+		t.Fatalf("expected current_input_file.enabled=true, body=%v", body)
+	}
+	if got := intFrom(currentInputFile["min_chars"]); got != 0 {
+		t.Fatalf("expected current_input_file.min_chars=0, got %d body=%v", got, body)
+	}
+	thinkingInjection, _ := body["thinking_injection"].(map[string]any)
+	if got := boolFrom(thinkingInjection["enabled"]); !got {
+		t.Fatalf("expected thinking_injection.enabled=true, body=%v", body)
+	}
+	if got, _ := thinkingInjection["prompt"].(string); got != "" {
+		t.Fatalf("expected empty custom thinking prompt, got %q body=%v", got, body)
+	}
+	if got, _ := thinkingInjection["default_prompt"].(string); got == "" {
+		t.Fatalf("expected default thinking prompt, body=%v", body)
 	}
 }
 
@@ -177,7 +194,7 @@ func TestUpdateSettingsHistorySplit(t *testing.T) {
 	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
 	payload := map[string]any{
 		"history_split": map[string]any{
-			"enabled":             false,
+			"enabled":             true,
 			"trigger_after_turns": 3,
 		},
 	}
@@ -190,10 +207,180 @@ func TestUpdateSettingsHistorySplit(t *testing.T) {
 	}
 	snap := h.Store.Snapshot()
 	if snap.HistorySplit.Enabled == nil || !*snap.HistorySplit.Enabled {
-		t.Fatalf("expected history_split.enabled to be forced true, got %#v", snap.HistorySplit.Enabled)
+		t.Fatalf("expected history_split.enabled=true, got %#v", snap.HistorySplit.Enabled)
 	}
 	if snap.HistorySplit.TriggerAfterTurns == nil || *snap.HistorySplit.TriggerAfterTurns != 3 {
 		t.Fatalf("expected history_split.trigger_after_turns=3, got %#v", snap.HistorySplit.TriggerAfterTurns)
+	}
+	if snap.CurrentInputFile.Enabled == nil || *snap.CurrentInputFile.Enabled {
+		t.Fatalf("expected history split to disable current_input_file, got %#v", snap.CurrentInputFile.Enabled)
+	}
+}
+
+func TestUpdateSettingsCurrentInputFile(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"],"history_split":{"enabled":true,"trigger_after_turns":2}}`)
+	payload := map[string]any{
+		"current_input_file": map[string]any{
+			"enabled":   true,
+			"min_chars": 12345,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.CurrentInputFile.Enabled == nil || !*snap.CurrentInputFile.Enabled {
+		t.Fatalf("expected current_input_file.enabled=true, got %#v", snap.CurrentInputFile)
+	}
+	if snap.CurrentInputFile.MinChars != 12345 {
+		t.Fatalf("expected current_input_file.min_chars=12345, got %#v", snap.CurrentInputFile)
+	}
+	if snap.HistorySplit.Enabled == nil || *snap.HistorySplit.Enabled {
+		t.Fatalf("expected current input file to disable history_split, got %#v", snap.HistorySplit.Enabled)
+	}
+}
+
+func TestUpdateSettingsCurrentInputFilePartialUpdatePreservesEnabled(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"],"current_input_file":{"enabled":false,"min_chars":777}}`)
+	payload := map[string]any{
+		"current_input_file": map[string]any{
+			"min_chars": 5000,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.CurrentInputFile.Enabled == nil || *snap.CurrentInputFile.Enabled {
+		t.Fatalf("expected current_input_file.enabled to remain false, got %#v", snap.CurrentInputFile.Enabled)
+	}
+	if snap.CurrentInputFile.MinChars != 5000 {
+		t.Fatalf("expected current_input_file.min_chars=5000, got %#v", snap.CurrentInputFile)
+	}
+}
+
+func TestUpdateSettingsCurrentInputFilePartialUpdatePreservesMinChars(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"],"current_input_file":{"enabled":false,"min_chars":777}}`)
+	payload := map[string]any{
+		"current_input_file": map[string]any{
+			"enabled": true,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.CurrentInputFile.Enabled == nil || !*snap.CurrentInputFile.Enabled {
+		t.Fatalf("expected current_input_file.enabled=true, got %#v", snap.CurrentInputFile.Enabled)
+	}
+	if snap.CurrentInputFile.MinChars != 777 {
+		t.Fatalf("expected current_input_file.min_chars to remain 777, got %#v", snap.CurrentInputFile)
+	}
+}
+
+func TestUpdateSettingsRejectsTwoSplitModesEnabled(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
+	payload := map[string]any{
+		"history_split": map[string]any{
+			"enabled":             true,
+			"trigger_after_turns": 3,
+		},
+		"current_input_file": map[string]any{
+			"enabled":   true,
+			"min_chars": 0,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateSettingsThinkingInjection(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
+	payload := map[string]any{
+		"thinking_injection": map[string]any{
+			"enabled": false,
+			"prompt":  " custom thinking prompt ",
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.ThinkingInjection.Enabled == nil || *snap.ThinkingInjection.Enabled {
+		t.Fatalf("expected thinking_injection.enabled=false, got %#v", snap.ThinkingInjection.Enabled)
+	}
+	if h.Store.ThinkingInjectionEnabled() {
+		t.Fatal("expected thinking injection accessor to reflect disabled config")
+	}
+	if got := h.Store.ThinkingInjectionPrompt(); got != "custom thinking prompt" {
+		t.Fatalf("expected custom thinking prompt, got %q", got)
+	}
+}
+
+func TestUpdateSettingsThinkingInjectionPartialPromptPreservesEnabled(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"],"thinking_injection":{"enabled":false,"prompt":"original prompt"}}`)
+	payload := map[string]any{
+		"thinking_injection": map[string]any{
+			"prompt": " updated prompt ",
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.ThinkingInjection.Enabled == nil || *snap.ThinkingInjection.Enabled {
+		t.Fatalf("expected thinking_injection.enabled to remain false, got %#v", snap.ThinkingInjection.Enabled)
+	}
+	if got := h.Store.ThinkingInjectionPrompt(); got != "updated prompt" {
+		t.Fatalf("expected updated prompt, got %q", got)
+	}
+}
+
+func TestUpdateSettingsThinkingInjectionPartialEnabledPreservesPrompt(t *testing.T) {
+	h := newAdminTestHandler(t, `{"keys":["k1"],"thinking_injection":{"enabled":false,"prompt":"original prompt"}}`)
+	payload := map[string]any{
+		"thinking_injection": map[string]any{
+			"enabled": true,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.ThinkingInjection.Enabled == nil || !*snap.ThinkingInjection.Enabled {
+		t.Fatalf("expected thinking_injection.enabled=true, got %#v", snap.ThinkingInjection.Enabled)
+	}
+	if got := h.Store.ThinkingInjectionPrompt(); got != "original prompt" {
+		t.Fatalf("expected original prompt to be preserved, got %q", got)
 	}
 }
 

@@ -95,6 +95,15 @@ func TestGetChatHistoryAndUpdateSettings(t *testing.T) {
 		t.Fatalf("expected detail etag header")
 	}
 
+	notModifiedItemReq := httptest.NewRequest(http.MethodGet, "/chat-history/"+entry.ID, nil)
+	notModifiedItemReq.Header.Set("Authorization", "Bearer admin")
+	notModifiedItemReq.Header.Set("If-None-Match", itemRec.Header().Get("ETag"))
+	notModifiedItemRec := httptest.NewRecorder()
+	r.ServeHTTP(notModifiedItemRec, notModifiedItemReq)
+	if notModifiedItemRec.Code != http.StatusNotModified {
+		t.Fatalf("expected detail 304, got %d body=%s", notModifiedItemRec.Code, notModifiedItemRec.Body.String())
+	}
+
 	updateReq := httptest.NewRequest(http.MethodPut, "/chat-history/settings", bytes.NewReader([]byte(`{"limit":10}`)))
 	updateReq.Header.Set("Authorization", "Bearer admin")
 	updateRec := httptest.NewRecorder()

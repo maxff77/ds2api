@@ -27,6 +27,12 @@ func ValidateConfig(c Config) error {
 	if err := ValidateHistorySplitConfig(c.HistorySplit); err != nil {
 		return err
 	}
+	if err := ValidateCurrentInputFileConfig(c.CurrentInputFile); err != nil {
+		return err
+	}
+	if c.HistorySplit.Enabled != nil && *c.HistorySplit.Enabled && c.CurrentInputFile.Enabled != nil && *c.CurrentInputFile.Enabled {
+		return fmt.Errorf("history_split.enabled and current_input_file.enabled cannot both be true")
+	}
 	if err := ValidateAccountProxyReferences(c.Accounts, c.Proxies); err != nil {
 		return err
 	}
@@ -119,6 +125,13 @@ func ValidateHistorySplitConfig(historySplit HistorySplitConfig) error {
 		if err := ValidateIntRange("history_split.trigger_after_turns", *historySplit.TriggerAfterTurns, 1, 1000, true); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func ValidateCurrentInputFileConfig(currentInputFile CurrentInputFileConfig) error {
+	if currentInputFile.MinChars != 0 {
+		return ValidateIntRange("current_input_file.min_chars", currentInputFile.MinChars, 1, 100000000, true)
 	}
 	return nil
 }

@@ -16,6 +16,24 @@ func (h *Handler) getChatHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"detail": "chat history store is not configured"})
 		return
 	}
+	ifNoneMatch := strings.TrimSpace(r.Header.Get("If-None-Match"))
+	if ifNoneMatch != "" {
+		revision, err := store.Revision()
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"detail": err.Error(),
+				"path":   store.Path(),
+			})
+			return
+		}
+		etag := chathistory.ListETag(revision)
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+		if ifNoneMatch == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -27,7 +45,7 @@ func (h *Handler) getChatHistory(w http.ResponseWriter, r *http.Request) {
 	etag := chathistory.ListETag(snapshot.Revision)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
-	if strings.TrimSpace(r.Header.Get("If-None-Match")) == etag {
+	if ifNoneMatch == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -51,6 +69,25 @@ func (h *Handler) getChatHistoryItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "history id is required"})
 		return
 	}
+	ifNoneMatch := strings.TrimSpace(r.Header.Get("If-None-Match"))
+	if ifNoneMatch != "" {
+		revision, err := store.DetailRevision(id)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(err.Error()), "not found") {
+				status = http.StatusNotFound
+			}
+			writeJSON(w, status, map[string]any{"detail": err.Error()})
+			return
+		}
+		etag := chathistory.DetailETag(id, revision)
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+		if ifNoneMatch == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	item, err := store.Get(id)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -63,7 +100,7 @@ func (h *Handler) getChatHistoryItem(w http.ResponseWriter, r *http.Request) {
 	etag := chathistory.DetailETag(item.ID, item.Revision)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
-	if strings.TrimSpace(r.Header.Get("If-None-Match")) == etag {
+	if ifNoneMatch == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

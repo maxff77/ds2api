@@ -126,7 +126,7 @@ func TestClaudeProxyViaOpenAIPreservesThinkingOverride(t *testing.T) {
 	}
 }
 
-func TestClaudeProxyViaOpenAIDisablesThinkingByDefault(t *testing.T) {
+func TestClaudeProxyViaOpenAIEnablesThinkingInternallyByDefaultForNonStream(t *testing.T) {
 	openAI := &openAIProxyCaptureStub{}
 	h := &Handler{
 		Store:  claudeProxyStoreStub{aliases: map[string]string{"claude-sonnet-4-6": "deepseek-v4-flash"}},
@@ -141,8 +141,8 @@ func TestClaudeProxyViaOpenAIDisablesThinkingByDefault(t *testing.T) {
 		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
 	}
 	thinking, _ := openAI.seenReq["thinking"].(map[string]any)
-	if thinking["type"] != "disabled" {
-		t.Fatalf("expected Claude default to disable downstream thinking, got %#v", openAI.seenReq)
+	if thinking["type"] != "enabled" {
+		t.Fatalf("expected Claude non-stream default to enable downstream thinking internally, got %#v", openAI.seenReq)
 	}
 }
 
@@ -163,6 +163,43 @@ func TestClaudeProxyViaOpenAIEnablesThinkingWhenRequested(t *testing.T) {
 	thinking, _ := openAI.seenReq["thinking"].(map[string]any)
 	if thinking["type"] != "enabled" {
 		t.Fatalf("expected Claude explicit thinking to enable downstream thinking, got %#v", openAI.seenReq)
+	}
+}
+
+func TestClaudeProxyViaOpenAIKeepsStreamDefaultThinkingDisabled(t *testing.T) {
+	openAI := &openAIProxyCaptureStub{}
+	h := &Handler{
+		Store:  claudeProxyStoreStub{aliases: map[string]string{"claude-sonnet-4-6": "deepseek-v4-flash"}},
+		OpenAI: openAI,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	rec := httptest.NewRecorder()
+
+	h.Messages(rec, req)
+
+	thinking, _ := openAI.seenReq["thinking"].(map[string]any)
+	if thinking["type"] != "disabled" {
+		t.Fatalf("expected Claude stream default to keep downstream thinking disabled, got %#v", openAI.seenReq)
+	}
+}
+
+func TestClaudeProxyViaOpenAIStripsThinkingBlocksFromNonStreamResponse(t *testing.T) {
+	body := `{"id":"chatcmpl_1","object":"chat.completion","created":1,"model":"claude-sonnet-4-5","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":"internal reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"search","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	h := &Handler{OpenAI: openAIProxyStub{status: 200, body: body}}
+	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}],"stream":false}`))
+	rec := httptest.NewRecorder()
+
+	h.Messages(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if strings.Contains(got, `"type":"thinking"`) {
+		t.Fatalf("expected converted Claude response to strip thinking block, got %s", got)
+	}
+	if !strings.Contains(got, `"tool_use"`) {
+		t.Fatalf("expected converted Claude response to preserve tool_use, got %s", got)
 	}
 }
 

@@ -150,6 +150,44 @@ func (h *Handler) handleVercelStreamRelease(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+func (h *Handler) handleVercelStreamPow(w http.ResponseWriter, r *http.Request) {
+	if !config.IsVercel() {
+		http.NotFound(w, r)
+		return
+	}
+	internalSecret := vercelInternalSecret()
+	internalToken := strings.TrimSpace(r.Header.Get("X-Ds2-Internal-Token"))
+	if internalSecret == "" || subtle.ConstantTimeCompare([]byte(internalToken), []byte(internalSecret)) != 1 {
+		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized internal request")
+		return
+	}
+
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	leaseID, _ := req["lease_id"].(string)
+	leaseID = strings.TrimSpace(leaseID)
+	if leaseID == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "lease_id is required")
+		return
+	}
+	leaseAuth := h.lookupStreamLeaseAuth(leaseID)
+	if leaseAuth == nil {
+		writeOpenAIError(w, http.StatusNotFound, "stream lease not found or expired")
+		return
+	}
+	powHeader, err := h.DS.GetPow(r.Context(), leaseAuth, 3)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "Failed to get PoW.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pow_header": powHeader,
+	})
+}
+
 func isVercelStreamPrepareRequest(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -162,6 +200,13 @@ func isVercelStreamReleaseRequest(r *http.Request) bool {
 		return false
 	}
 	return strings.TrimSpace(r.URL.Query().Get("__stream_release")) == "1"
+}
+
+func isVercelStreamPowRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.TrimSpace(r.URL.Query().Get("__stream_pow")) == "1"
 }
 
 func vercelInternalSecret() string {
@@ -197,6 +242,20 @@ func (h *Handler) holdStreamLease(a *auth.RequestAuth) string {
 	h.leaseMu.Unlock()
 	h.releaseExpiredAuths(expired)
 	return leaseID
+}
+
+func (h *Handler) lookupStreamLeaseAuth(leaseID string) *auth.RequestAuth {
+	leaseID = strings.TrimSpace(leaseID)
+	if leaseID == "" {
+		return nil
+	}
+	h.leaseMu.Lock()
+	lease, ok := h.streamLeases[leaseID]
+	h.leaseMu.Unlock()
+	if !ok || time.Now().After(lease.ExpiresAt) {
+		return nil
+	}
+	return lease.Auth
 }
 
 func (h *Handler) releaseStreamLease(leaseID string) bool {

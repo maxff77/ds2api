@@ -20,6 +20,10 @@ type mockOpenAIConfig struct {
 	embedProv           string
 	historySplitEnabled bool
 	historySplitTurns   int
+	currentInputEnabled bool
+	currentInputMin     int
+	thinkingInjection   *bool
+	thinkingPrompt      string
 }
 
 func (m mockOpenAIConfig) ModelAliases() map[string]string { return m.aliases }
@@ -45,6 +49,17 @@ func (m mockOpenAIConfig) HistorySplitTriggerAfterTurns() int {
 	}
 	return m.historySplitTurns
 }
+func (m mockOpenAIConfig) CurrentInputFileEnabled() bool { return m.currentInputEnabled }
+func (m mockOpenAIConfig) CurrentInputFileMinChars() int {
+	return m.currentInputMin
+}
+func (m mockOpenAIConfig) ThinkingInjectionEnabled() bool {
+	if m.thinkingInjection == nil {
+		return false
+	}
+	return *m.thinkingInjection
+}
+func (m mockOpenAIConfig) ThinkingInjectionPrompt() string { return m.thinkingPrompt }
 
 type streamStatusAuthStub struct{}
 

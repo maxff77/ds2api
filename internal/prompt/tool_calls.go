@@ -38,7 +38,7 @@ func FormatToolCallsForPrompt(raw any) string {
 	if len(blocks) == 0 {
 		return ""
 	}
-	return "<tool_calls>\n" + strings.Join(blocks, "\n") + "\n</tool_calls>"
+	return "<|DSML|tool_calls>\n" + strings.Join(blocks, "\n") + "\n</|DSML|tool_calls>"
 }
 
 // StringifyToolCallArguments normalizes tool arguments into a compact string
@@ -94,12 +94,12 @@ func formatToolCallForPrompt(call map[string]any) string {
 
 	parameters := formatToolCallParametersForPrompt(argsRaw)
 	if parameters == "" {
-		return `  <invoke name="` + escapeXMLAttribute(name) + `"></invoke>`
+		return `  <|DSML|invoke name="` + escapeXMLAttribute(name) + `"></|DSML|invoke>`
 	}
 
-	return "  <invoke name=\"" + escapeXMLAttribute(name) + "\">\n" +
+	return "  <|DSML|invoke name=\"" + escapeXMLAttribute(name) + "\">\n" +
 		parameters + "\n" +
-		"  </invoke>"
+		"  </|DSML|invoke>"
 }
 
 func formatToolCallParametersForPrompt(raw any) string {
@@ -113,7 +113,7 @@ func formatToolCallParametersForPrompt(raw any) string {
 	if strings.TrimSpace(fallback) == "" {
 		return ""
 	}
-	return "    <parameter name=\"content\">" + renderPromptXMLText(fallback) + "</parameter>"
+	return "    <|DSML|parameter name=\"content\">" + renderPromptXMLText(fallback) + "</|DSML|parameter>"
 }
 
 func renderPromptToolParameters(value any, indent string) (string, bool) {
@@ -149,9 +149,9 @@ func renderPromptToolParameters(value any, indent string) (string, bool) {
 		}
 		return strings.Join(lines, "\n"), true
 	case string:
-		return indent + `<parameter name="content">` + renderPromptXMLText(v) + `</parameter>`, true
+		return indent + `<|DSML|parameter name="content">` + renderPromptXMLText(v) + `</|DSML|parameter>`, true
 	default:
-		return indent + `<parameter name="value">` + renderPromptXMLText(fmt.Sprint(v)) + `</parameter>`, true
+		return indent + `<|DSML|parameter name="value">` + renderPromptXMLText(fmt.Sprint(v)) + `</|DSML|parameter>`, true
 	}
 }
 
@@ -162,29 +162,29 @@ func renderPromptParameterNode(name string, value any, indent string) (string, b
 	}
 	switch v := value.(type) {
 	case nil:
-		return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + `"></parameter>`, true
+		return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + `"></|DSML|parameter>`, true
 	case map[string]any:
 		body, ok := renderPromptToolXMLBody(v, indent+"  ")
 		if !ok {
 			return "", false
 		}
 		if strings.TrimSpace(body) == "" {
-			return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + `"></parameter>`, true
+			return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + `"></|DSML|parameter>`, true
 		}
-		return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + `</parameter>`, true
+		return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + `</|DSML|parameter>`, true
 	case []any:
 		body, ok := renderPromptToolXMLArray(v, indent+"  ")
 		if !ok {
 			return "", false
 		}
 		if strings.TrimSpace(body) == "" {
-			return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + `"></parameter>`, true
+			return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + `"></|DSML|parameter>`, true
 		}
-		return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + `</parameter>`, true
+		return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + `</|DSML|parameter>`, true
 	case string:
-		return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(v) + `</parameter>`, true
+		return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(v) + `</|DSML|parameter>`, true
 	default:
-		return indent + `<parameter name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(fmt.Sprint(v)) + `</parameter>`, true
+		return indent + `<|DSML|parameter name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(fmt.Sprint(v)) + `</|DSML|parameter>`, true
 	}
 }
 

@@ -45,6 +45,10 @@ type ConfigReader interface {
 	AutoDeleteSessions() bool
 	HistorySplitEnabled() bool
 	HistorySplitTriggerAfterTurns() int
+	CurrentInputFileEnabled() bool
+	CurrentInputFileMinChars() int
+	ThinkingInjectionEnabled() bool
+	ThinkingInjectionPrompt() string
 }
 
 type Deps struct {

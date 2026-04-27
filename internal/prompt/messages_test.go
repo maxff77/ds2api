@@ -58,23 +58,14 @@ func TestNormalizeContentArrayFallsBackToContentWhenTextEmpty(t *testing.T) {
 	}
 }
 
-func TestMessagesPrepareWithThinkingAddsContinuityContract(t *testing.T) {
+func TestMessagesPrepareWithThinkingPreservesPromptShape(t *testing.T) {
 	messages := []map[string]any{{"role": "user", "content": "Question"}}
 	gotThinking := MessagesPrepareWithThinking(messages, true)
 	gotPlain := MessagesPrepareWithThinking(messages, false)
-	if gotThinking == gotPlain {
-		t.Fatalf("expected thinking-enabled prompt to include extra continuity instructions")
+	if gotThinking != gotPlain {
+		t.Fatalf("expected thinking flag not to add extra continuity instructions, got thinking=%q plain=%q", gotThinking, gotPlain)
 	}
 	if !strings.HasSuffix(gotThinking, "<｜Assistant｜>") {
 		t.Fatalf("expected assistant suffix, got %q", gotThinking)
-	}
-	if !strings.Contains(gotThinking, "Continue the conversation from the full prior context") {
-		t.Fatalf("expected continuity instruction in thinking prompt, got %q", gotThinking)
-	}
-	if !strings.Contains(gotThinking, "final user-facing answer only in reasoning") {
-		t.Fatalf("expected visible-answer instruction in thinking prompt, got %q", gotThinking)
-	}
-	if strings.Contains(gotPlain, "Continue the conversation from the full prior context") {
-		t.Fatalf("did not expect thinking-only instruction in plain prompt, got %q", gotPlain)
 	}
 }

@@ -37,7 +37,7 @@ Docs: [Overview](README.en.md) / [Architecture](docs/ARCHITECTURE.en.md) / [Depl
 
 - OpenAI / Claude / Gemini protocols are now mounted on one shared `chi` router tree assembled in `internal/server/router.go`.
 - Adapter responsibilities are streamlined to: **request normalization → DeepSeek invocation → protocol-shaped rendering**, reducing legacy split-logic paths.
-- Tool-calling semantics are aligned between Go and Node runtime: the only executable model-output syntax is the canonical XML tool block `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`, plus stream-time anti-leak filtering.
+- Tool-calling semantics are aligned between Go and Node runtime: models should output the DSML shell `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`; DS2API also accepts legacy canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`. DSML is normalized back to XML at the parser entry, so internal parsing remains XML-based, with stream-time anti-leak filtering.
 - `Admin API` separates static config from runtime policy: `/admin/config*` for configuration state, `/admin/settings*` for runtime behavior.
 
 ---
@@ -334,7 +334,8 @@ When `tools` is present, DS2API performs anti-leak handling:
 
 Additional notes:
 
-- The parser currently treats only canonical XML tool blocks (`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`) as executable tool calls. Legacy `<tools>`, `<tool_call>`, `<tool_name>`, `<param>`, `<function_call>`, `tool_use`, antml variants, and standalone JSON `tool_calls` payloads are treated as plain text.
+- The parser treats DSML shell tool blocks (`<|DSML|tool_calls>` / `<|DSML|invoke name="...">` / `<|DSML|parameter name="...">`) and legacy canonical XML tool blocks (`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`) as executable tool calls. DSML is normalized back to XML at the parser entry; internal parsing remains XML-based. Legacy `<tools>`, `<tool_call>`, `<tool_name>`, `<param>`, `<function_call>`, `tool_use`, antml variants, and standalone JSON `tool_calls` payloads are treated as plain text.
+- If the final visible response text is empty but the reasoning stream contains an executable tool call, Chat / Responses emits a standard OpenAI `tool_calls` / `function_call` output during finalization. If thinking/reasoning was not enabled by the client, that reasoning text is used only for detection and is not exposed as visible text or `reasoning_content`.
 - `tool_calls` shown inside fenced markdown code blocks (for example, ```json ... ```) are treated as examples, not executable calls.
 
 ---

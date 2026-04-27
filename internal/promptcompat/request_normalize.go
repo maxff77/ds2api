@@ -25,6 +25,9 @@ func NormalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID 
 	}
 	defaultThinkingEnabled, searchEnabled, _ := config.GetModelConfig(resolvedModel)
 	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
+	if config.IsNoThinkingModel(resolvedModel) {
+		thinkingEnabled = false
+	}
 	responseModel := strings.TrimSpace(model)
 	if responseModel == "" {
 		responseModel = resolvedModel
@@ -65,6 +68,9 @@ func NormalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 	}
 	defaultThinkingEnabled, searchEnabled, _ := config.GetModelConfig(resolvedModel)
 	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
+	if config.IsNoThinkingModel(resolvedModel) {
+		thinkingEnabled = false
+	}
 
 	// Keep width-control as an explicit policy hook even if current default is true.
 	allowWideInput := true

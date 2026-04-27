@@ -69,20 +69,25 @@ func isFragmentStatusPath(path string) bool {
 }
 
 func ParseSSEChunkForContent(chunk map[string]any, thinkingEnabled bool, currentFragmentType string) ([]ContentPart, bool, string) {
+	parts, _, finished, nextType := ParseSSEChunkForContentDetailed(chunk, thinkingEnabled, currentFragmentType)
+	return parts, finished, nextType
+}
+
+func ParseSSEChunkForContentDetailed(chunk map[string]any, thinkingEnabled bool, currentFragmentType string) ([]ContentPart, []ContentPart, bool, string) {
 	v, ok := chunk["v"]
 	if !ok {
-		return nil, false, currentFragmentType
+		return nil, nil, false, currentFragmentType
 	}
 	path, _ := chunk["p"].(string)
 	if shouldSkipPath(path) {
-		return nil, false, currentFragmentType
+		return nil, nil, false, currentFragmentType
 	}
 	if isStatusPath(path) {
 		if s, ok := v.(string); ok {
 			if strings.EqualFold(strings.TrimSpace(s), "FINISHED") {
-				return nil, true, currentFragmentType
+				return nil, nil, true, currentFragmentType
 			}
-			return nil, false, currentFragmentType
+			return nil, nil, false, currentFragmentType
 		}
 	}
 	newType := currentFragmentType
@@ -92,18 +97,32 @@ func ParseSSEChunkForContent(chunk map[string]any, thinkingEnabled bool, current
 	partType := resolvePartType(path, thinkingEnabled, newType)
 	finished := appendChunkValueContent(v, partType, &newType, &parts, path)
 	if finished {
-		return nil, true, newType
+		return nil, nil, true, newType
 	}
 	var transitioned bool
 	parts, transitioned = splitThinkingParts(parts)
 	if transitioned {
 		newType = "text"
 	}
+	detectionThinkingParts := selectThinkingParts(parts)
 	if !thinkingEnabled {
 		parts = dropThinkingParts(parts)
 		newType = "text"
 	}
-	return parts, false, newType
+	return parts, detectionThinkingParts, false, newType
+}
+
+func selectThinkingParts(parts []ContentPart) []ContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]ContentPart, 0, len(parts))
+	for _, p := range parts {
+		if p.Type == "thinking" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func collectDirectFragments(path string, chunk map[string]any, v any, newType *string, parts *[]ContentPart) {

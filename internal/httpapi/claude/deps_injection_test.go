@@ -53,6 +53,26 @@ func TestNormalizeClaudeRequestEnablesThinkingWhenRequested(t *testing.T) {
 	}
 }
 
+func TestNormalizeClaudeRequestNoThinkingAliasForcesThinkingOff(t *testing.T) {
+	req := map[string]any{
+		"model": "claude-opus-4-6-nothinking",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hello"},
+		},
+		"thinking": map[string]any{"type": "enabled", "budget_tokens": 1024},
+	}
+	out, err := normalizeClaudeRequest(mockClaudeConfig{}, req)
+	if err != nil {
+		t.Fatalf("normalizeClaudeRequest error: %v", err)
+	}
+	if out.Standard.ResolvedModel != "deepseek-v4-pro-nothinking" {
+		t.Fatalf("resolved model mismatch: got=%q", out.Standard.ResolvedModel)
+	}
+	if out.Standard.Thinking {
+		t.Fatalf("expected nothinking alias to force downstream thinking off")
+	}
+}
+
 func TestNormalizeClaudeRequestPrefersGlobalAliasMapping(t *testing.T) {
 	req := map[string]any{
 		"model": "claude-sonnet-4-6",

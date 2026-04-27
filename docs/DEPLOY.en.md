@@ -70,9 +70,9 @@ Built-in GitHub Actions workflow: `.github/workflows/release-artifacts.yml`
 
 | Platform | Architecture | Format |
 | --- | --- | --- |
-| Linux | amd64, arm64 | `.tar.gz` |
+| Linux | amd64, arm64, armv7 | `.tar.gz` |
 | macOS | amd64, arm64 | `.tar.gz` |
-| Windows | amd64 | `.zip` |
+| Windows | amd64, arm64 | `.zip` |
 
 Each archive includes:
 
@@ -538,7 +538,7 @@ curl -s http://127.0.0.1:5001/readyz
 
 # 3. Model list
 curl -s http://127.0.0.1:5001/v1/models
-# Expected: {"object":"list","data":[...]}
+# Expected: {"object":"list","data":[...]} (including `*-nothinking` variants)
 
 # 4. Admin panel (if WebUI is built)
 curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/admin

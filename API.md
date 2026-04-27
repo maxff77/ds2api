@@ -37,7 +37,7 @@
 
 - OpenAI / Claude / Gemini 三套协议已统一挂在同一 `chi` 路由树上，由 `internal/server/router.go` 负责装配。
 - 适配器层职责收敛为：**请求归一化 → DeepSeek 调用 → 协议形态渲染**，减少历史版本中“同能力多处实现”的分叉。
-- Tool Calling 的解析策略在 Go 与 Node Runtime 间保持一致：当前唯一可执行的模型输出语法是 canonical XML 工具块 `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`，并在流式场景执行防泄漏筛分。
+- Tool Calling 的解析策略在 Go 与 Node Runtime 间保持一致：推荐模型输出 DSML 外壳 `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`；兼容层也接受 DSML wrapper 别名 `<dsml|tool_calls>`、`<|tool_calls>`、`<｜tool_calls>`、常见 DSML 分隔符漏写形态（如 `<|DSML tool_calls>`）、`DSML` 与工具标签名黏连的常见 typo（如 `<DSMLtool_calls>`），以及旧式 canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`。实现上采用窄容错结构扫描：只有 `tool_calls` wrapper 或可修复的缺失 opening wrapper 会进入工具路径，裸 `<invoke>` 不计为已支持语法；流式场景继续执行防泄漏筛分。若参数体本身是合法 JSON 字面量（如 `123`、`true`、`null`、数组或对象），会按结构化值输出，不再一律当作字符串；若 CDATA 偶发漏闭合，则会在最终 parse / flush 恢复阶段做窄修复，尽量保住已完整包裹的外层工具调用。
 - `Admin API` 将配置与运行时策略分开：`/admin/config*` 管静态配置，`/admin/settings*` 管运行时行为。
 
 ---
@@ -196,16 +196,22 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
   "object": "list",
   "data": [
     {"id": "deepseek-v4-flash", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-flash-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-v4-pro", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-pro-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-v4-flash-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-flash-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-v4-pro-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-pro-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-v4-vision", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-vision-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
+    {"id": "deepseek-v4-vision-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-vision-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-v4-vision-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
   ]
 }
 ```
 
-> 说明：`/v1/models` 返回的是规范化后的 DeepSeek 原生模型 ID；常见 alias 仅用于请求入参解析，不会在该接口中单独展开返回。
+> 说明：`/v1/models` 返回的是规范化后的 DeepSeek 原生模型 ID；常见 alias 仅用于请求入参解析，不会在该接口中单独展开返回。带 `-nothinking` 后缀的模型表示无论请求里是否显式开启 thinking / reasoning，都会强制关闭思考输出。
 
 ### 模型 alias 解析策略
 
@@ -213,8 +219,9 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 
 1. 先匹配 DeepSeek 原生模型。
 2. 再匹配 `model_aliases` 精确映射。
-3. 未命中时按模型家族规则回退（如 `o*`、`gpt-*`、`claude-*`）。
-4. 仍未命中则返回 `invalid_request_error`。
+3. 如果请求名以 `-nothinking` 结尾，则在最终解析出的规范模型上追加对应的无思考变体。
+4. 未命中时按模型家族规则回退（如 `o*`、`gpt-*`、`claude-*`）。
+5. 仍未命中则返回 `invalid_request_error`。
 
 当前内置默认 alias 来自 `internal/config/models.go`，`config.model_aliases` 会在运行时覆盖或补充同名映射。节选：
 
@@ -223,6 +230,8 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 - Claude：`claude-opus-4-6`、`claude-sonnet-4-6`、`claude-haiku-4-5`、`claude-3-5-sonnet-latest`
 - Gemini：`gemini-2.5-pro`、`gemini-2.5-flash`、`gemini-pro-vision`
 - 其他兼容族：`llama-*`、`qwen-*`、`mistral-*`、`command-*` 会按家族启发式回退
+
+上述 alias 若在请求名后追加 `-nothinking` 后缀，也会映射到对应的强制关闭 thinking 版本。
 
 退役历史模型（如 `claude-1.*`、`claude-2.*`、`claude-instant-*`、`gpt-3.5*`）会被显式拒绝。
 
@@ -239,7 +248,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-5.5`、`gpt-5.4-mini`、`gpt-5.3-codex`、`o3`、`claude-opus-4-6`、`claude-sonnet-4-6`、`gemini-2.5-pro`、`gemini-2.5-flash` 等） |
+| `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-5.5`、`gpt-5.4-mini`、`gpt-5.3-codex`、`o3`、`claude-opus-4-6`、`claude-sonnet-4-6`、`gemini-2.5-pro`、`gemini-2.5-flash` 等）；若模型名带 `-nothinking` 后缀，则强制关闭 thinking / reasoning |
 | `messages` | array | ✅ | OpenAI 风格消息数组 |
 | `stream` | boolean | ❌ | 默认 `false` |
 | `tools` | array | ❌ | Function Calling 定义 |
@@ -335,7 +344,8 @@ data: [DONE]
 补充说明：
 
 - **非代码块上下文**下，工具负载即使与普通文本混合，也会按特征识别并产出可执行 tool call（前后普通文本仍可透传）。
-- 解析器当前只把 canonical XML 工具块（`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`）作为可执行调用解析；旧式 `<tools>`、`<tool_call>`、`<tool_name>`、`<param>`、`<function_call>`、`tool_use`、antml 风格与纯 JSON `tool_calls` 片段默认都会按普通文本处理。
+- 解析器当前把 DSML 外壳（`<|DSML|tool_calls>` / `<|DSML|invoke name="...">` / `<|DSML|parameter name="...">`）、DSML wrapper 别名（`<dsml|tool_calls>`、`<|tool_calls>`、`<｜tool_calls>`）、常见 DSML 分隔符漏写形态（如 `<|DSML tool_calls>` / `<|DSML invoke>` / `<|DSML parameter>`）、`DSML` 与工具标签名黏连的常见 typo（如 `<DSMLtool_calls>` / `<DSMLinvoke>` / `<DSMLparameter>`）和旧式 canonical XML 工具块（`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`）作为可执行调用解析；DSML 会先归一化回 XML，内部仍以 XML 解析语义为准。旧式 `<tools>`、`<tool_call>`、`<tool_name>`、`<param>`、`<function_call>`、`tool_use`、antml 风格与纯 JSON `tool_calls` 片段默认都会按普通文本处理。
+- 当最终可见正文为空但思维链里包含可执行工具调用时，Chat / Responses 会在收尾阶段补发标准 OpenAI `tool_calls` / `function_call` 输出；如果客户端未开启 thinking / reasoning，该思维链只用于检测，不会作为可见正文或 `reasoning_content` 暴露。
 - Markdown fenced code block（例如 ```json ... ```）中的 `tool_calls` 仅视为示例文本，不会被执行。
 
 ---
@@ -448,16 +458,19 @@ data: [DONE]
   "object": "list",
   "data": [
     {"id": "claude-sonnet-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
+    {"id": "claude-sonnet-4-6-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
     {"id": "claude-haiku-4-5", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-opus-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"}
+    {"id": "claude-haiku-4-5-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
+    {"id": "claude-opus-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
+    {"id": "claude-opus-4-6-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"}
   ],
   "first_id": "claude-opus-4-6",
-  "last_id": "claude-3-haiku-20240307",
+  "last_id": "claude-3-haiku-20240307-nothinking",
   "has_more": false
 }
 ```
 
-> 说明：示例仅展示部分模型；实际返回除当前主别名外，还包含 Claude 4.x snapshots，以及 3.x 历史模型 ID 与常见别名。
+> 说明：示例仅展示部分模型；实际返回除当前主别名外，还包含 Claude 4.x snapshots、3.x 历史模型 ID 与常见别名，并为这些可映射模型额外提供 `-nothinking` 变体。
 
 ### `POST /anthropic/v1/messages`
 
@@ -475,7 +488,7 @@ anthropic-version: 2023-06-01
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 例如 `claude-sonnet-4-6` / `claude-opus-4-6` / `claude-haiku-4-5`（兼容 `claude-sonnet-4-5`、`claude-3-5-haiku-latest`），并支持历史 Claude 模型 ID |
+| `model` | string | ✅ | 例如 `claude-sonnet-4-6` / `claude-opus-4-6` / `claude-haiku-4-5`（兼容 `claude-sonnet-4-5`、`claude-3-5-haiku-latest`），并支持历史 Claude 模型 ID；若模型名带 `-nothinking` 后缀，则强制关闭 thinking / reasoning |
 | `messages` | array | ✅ | Claude 风格消息数组 |
 | `max_tokens` | number | ❌ | 缺省自动补 `8192`；当前实现不会硬性截断上游输出 |
 | `stream` | boolean | ❌ | 默认 `false` |
@@ -533,7 +546,8 @@ data: {"type":"message_stop"}
 
 **说明**：
 
-- 名称中包含 `opus` / `reasoner` / `slow` 的模型会输出 `thinking_delta`
+- 默认模型会按各 surface 的既有规则输出 thinking / reasoning 相关增量
+- 带 `-nothinking` 后缀的模型会强制关闭 thinking，即使请求显式传了 `thinking` / `reasoning` / `reasoning_effort` 也不会输出 `thinking_delta`
 - 不会输出 `signature_delta`（上游 DeepSeek 未提供可验证签名）
 - `tools` 场景优先避免泄露原始工具 JSON，不强制发送 `input_json_delta`
 
@@ -574,7 +588,7 @@ data: {"type":"message_stop"}
 
 ### `POST /v1beta/models/{model}:generateContent`
 
-请求体兼容 Gemini `contents` / `tools` 字段，模型名可用 alias 自动映射到 DeepSeek 模型。
+请求体兼容 Gemini `contents` / `tools` 字段，模型名可用 alias 自动映射到 DeepSeek 模型；若路径中的模型名带 `-nothinking` 后缀，则最终会映射到对应的无思考模型。
 
 响应为 Gemini 兼容结构，核心字段包括：
 

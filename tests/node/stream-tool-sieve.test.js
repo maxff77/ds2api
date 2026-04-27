@@ -49,6 +49,226 @@ test('parseToolCalls parses XML markup tool call', () => {
   assert.deepEqual(calls[0].input, { path: 'README.MD' });
 });
 
+test('parseToolCalls parses DSML shell as XML-compatible tool call', () => {
+  const payload = '<|DSML|tool_calls><|DSML|invoke name="read_file"><|DSML|parameter name="path">README.MD</|DSML|parameter></|DSML|invoke></|DSML|tool_calls>';
+  const calls = parseToolCalls(payload, ['read_file']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'read_file');
+  assert.deepEqual(calls[0].input, { path: 'README.MD' });
+});
+
+test('parseToolCalls tolerates DSML space-separator typo', () => {
+  const payload = '<|DSML tool_calls><|DSML invoke name="Read"><|DSML parameter name="file_path"><![CDATA[/tmp/input.txt]]></|DSML parameter></|DSML invoke></|DSML tool_calls>';
+  const calls = parseToolCalls(payload, ['Read']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'Read');
+  assert.deepEqual(calls[0].input, { file_path: '/tmp/input.txt' });
+});
+
+test('parseToolCalls ignores DSML space lookalike tag names', () => {
+  const payload = '<|DSML tool_calls_extra><|DSML invoke name="Read"><|DSML parameter name="file_path">/tmp/input.txt</|DSML parameter></|DSML invoke></|DSML tool_calls_extra>';
+  const calls = parseToolCalls(payload, ['Read']);
+  assert.equal(calls.length, 0);
+});
+
+test('parseToolCalls tolerates collapsed DSML tag names', () => {
+  const todos = [
+    '[x] 检查 toolcalls_format.go 格式化逻辑',
+    '[x] 检查 toolcalls_parse.go 解析逻辑',
+    '[x] 检查 toolcalls_xml.go 和 toolcalls_dsml.go',
+    '[x] 检查 toolcalls_markup.go 和 toolcalls_json_repair.go',
+    '[x] 检查 prompt/tool_calls.go 注入逻辑',
+    '[x] 检查 toolstream 流式解析',
+    '[x] 查看测试文件确认预期行为',
+    '[x] 给出调查结论',
+  ].join('\n');
+  const payload = `<DSMLtool_calls><DSMLinvoke name="update_todo_list"><DSMLparameter name="todos"><![CDATA[${todos}]]></DSMLparameter></DSMLinvoke></DSMLtool_calls>`;
+  const calls = parseToolCalls(payload, ['update_todo_list']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'update_todo_list');
+  assert.equal(calls[0].input.todos, todos);
+});
+
+test('parseToolCalls ignores collapsed DSML lookalike tag names', () => {
+  const payload = '<DSMLtool_calls_extra><DSMLinvoke name="update_todo_list"><DSMLparameter name="todos">x</DSMLparameter></DSMLinvoke></DSMLtool_calls_extra>';
+  const calls = parseToolCalls(payload, ['update_todo_list']);
+  assert.equal(calls.length, 0);
+});
+
+test('parseToolCalls keeps canonical XML examples inside DSML CDATA', () => {
+  const content = '<tool_calls><invoke name="demo"><parameter name="value">x</parameter></invoke></tool_calls>';
+  const payload = `<|DSML|tool_calls><|DSML|invoke name="write_file"><|DSML|parameter name="path">notes.md</|DSML|parameter><|DSML|parameter name="content"><![CDATA[${content}]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>`;
+  const calls = parseToolCalls(payload, ['write_file']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'write_file');
+  assert.deepEqual(calls[0].input, { path: 'notes.md', content });
+});
+
+test('parseToolCalls recovers when CDATA never closes inside a valid wrapper', () => {
+  const payload = '<tool_calls><invoke name="Write"><parameter name="content"><![CDATA[hello world</parameter></invoke></tool_calls>';
+  const calls = parseToolCalls(payload, ['Write']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'Write');
+  assert.equal(calls[0].input.content, 'hello world');
+});
+
+test('parseToolCalls supports JSON scalar parameters', () => {
+  const payload = '<tool_calls><invoke name="configure"><parameter name="count">123</parameter><parameter name="max_tokens"><![CDATA[256]]></parameter><parameter name="enabled">true</parameter></invoke></tool_calls>';
+  const calls = parseToolCalls(payload, ['configure']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'configure');
+  assert.equal(calls[0].input.count, 123);
+  assert.equal(calls[0].input.max_tokens, 256);
+  assert.equal(calls[0].input.enabled, true);
+});
+
+test('parseToolCalls normalizes mixed DSML and XML tool tags', () => {
+  // Models commonly mix DSML wrapper tags with canonical inner tags.
+  const payload = '<|DSML|tool_calls><invoke name="read_file"><|DSML|parameter name="path">README.MD</|DSML|parameter></invoke></|DSML|tool_calls>';
+  const calls = parseToolCalls(payload, ['read_file']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'read_file');
+  assert.deepEqual(calls[0].input, { path: 'README.MD' });
+});
+
+test('parseToolCalls skips prose mention of same wrapper variant', () => {
+  const payload = [
+    'Summary: support canonical <tool_calls> and DSML <|DSML|tool_calls> wrappers.',
+    '',
+    '<|DSML|tool_calls>',
+    '<|DSML|invoke name="Bash">',
+    '<|DSML|parameter name="command"><![CDATA[git status]]></|DSML|parameter>',
+    '</|DSML|invoke>',
+    '</|DSML|tool_calls>',
+  ].join('\n');
+  const calls = parseToolCalls(payload, ['Bash']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'Bash');
+  assert.equal(calls[0].input.command, 'git status');
+});
+
+test('sieve emits tool_calls after prose mentions same wrapper variant', () => {
+  const events = runSieve([
+    'Summary: support canonical <tool_calls> and DSML <|DSML|tool_calls> wrappers.\n\n',
+    '<|DSML|tool_calls>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git status]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '</|DSML|tool_calls>',
+  ], ['Bash']);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'Bash');
+  assert.equal(finalCalls[0].input.command, 'git status');
+  assert.equal(collectText(events).includes('Summary:'), true);
+});
+
+test('sieve emits tool_calls for DSML space-separator typo', () => {
+  const events = runSieve([
+    '准备读取文件。\n',
+    '<|DSML tool_calls>\n',
+    '<|DSML invoke name="Read">\n',
+    '<|DSML parameter name="file_path"><![CDATA[/tmp/input.txt]]></|DSML parameter>\n',
+    '</|DSML invoke>\n',
+    '</|DSML tool_calls>',
+  ], ['Read']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'Read');
+  assert.equal(finalCalls[0].input.file_path, '/tmp/input.txt');
+  assert.equal(text.includes('准备读取文件'), true);
+  assert.equal(text.includes('<|DSML invoke'), false);
+});
+
+test('sieve keeps DSML space lookalike tag names as text', () => {
+  const input = '<|DSML tool_calls_extra><|DSML invoke name="Read"><|DSML parameter name="file_path">/tmp/input.txt</|DSML parameter></|DSML invoke></|DSML tool_calls_extra>';
+  const events = runSieve([input], ['Read']);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 0);
+  assert.equal(collectText(events), input);
+});
+
+test('sieve emits tool_calls for collapsed DSML tag names and preserves prefix text', () => {
+  const todos = [
+    '[x] 检查 toolcalls_format.go 格式化逻辑',
+    '[x] 检查 toolcalls_parse.go 解析逻辑',
+    '[x] 检查 toolcalls_xml.go 和 toolcalls_dsml.go',
+    '[x] 检查 toolcalls_markup.go 和 toolcalls_json_repair.go',
+    '[x] 检查 prompt/tool_calls.go 注入逻辑',
+    '[x] 检查 toolstream 流式解析',
+    '[x] 查看测试文件确认预期行为',
+    '[x] 给出调查结论',
+  ].join('\n');
+  const events = runSieve([
+    '[]\n',
+    '<DSMLtool_calls>\n',
+    '<DSMLinvoke name="update_todo_list">\n',
+    `<DSMLparameter name="todos"><![CDATA[${todos}]]></DSMLparameter>\n`,
+    '</DSMLinvoke>\n',
+    '</DSMLtool_calls>',
+  ], ['update_todo_list']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'update_todo_list');
+  assert.equal(finalCalls[0].input.todos, todos);
+  assert.equal(text, '[]\n');
+});
+
+test('sieve keeps collapsed DSML lookalike tag names as text', () => {
+  const input = '<DSMLtool_calls_extra><DSMLinvoke name="update_todo_list"><DSMLparameter name="todos">x</DSMLparameter></DSMLinvoke></DSMLtool_calls_extra>';
+  const events = runSieve([input], ['update_todo_list']);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 0);
+  assert.equal(collectText(events), input);
+});
+
+test('sieve preserves review body with alias mentions before real DSML tool calls', () => {
+  const events = runSieve([
+    "Done reviewing the diff. Here's my analysis before we commit:\n\n",
+    'Summary of Changes\n',
+    'DSML wrapper variant support — recognize aliases (<dsml|tool_calls>, <|tool_calls>, <｜tool_calls>) alongside canonical <tool_calls> and <|DSML|tool_calls> wrappers.\n\n',
+    '<|DSML|tool_calls>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git add docs/toolcall-semantics.md internal/toolstream/tool_sieve_xml.go]]></|DSML|parameter>\n',
+    '<|DSML|parameter name="description"><![CDATA[Stage all relevant changed files]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git commit -m "$(cat <<\'EOF\'\nfeat(toolstream): expand DSML wrapper detection\n\nSupport DSML wrapper aliases: <dsml|tool_calls>, <|tool_calls>, <｜tool_calls> alongside existing canonical wrappers.\nEOF\n)"]]></|DSML|parameter>\n',
+    '<|DSML|parameter name="description"><![CDATA[Create commit with all staged changes]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '</|DSML|tool_calls>',
+  ], ['Bash']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 2);
+  assert.equal(text.includes('<|DSML|tool_calls> wrappers'), true);
+  assert.equal(text.includes('Summary of Changes'), true);
+  assert.equal(text.includes('git add docs/toolcall-semantics.md'), false);
+});
+
+test('sieve preserves Chinese review body with inline DSML mention before real tool call', () => {
+  const events = runSieve([
+    '# Context from my IDE setup:\n\n## My request for Codex:\n',
+    '基于我的审查，这是工作区更改的总结和提交。\n\n## 审查报告\n\n### 文档\n\nAPI.md 中的工具调用部分缺少针对新 DSML 别名的更新——它只提到了 `',
+    '<|DSML|tool_calls>` 和 canonical `<tool_calls>`。由于这涉及 API 兼容性和文档准确性，需要在下游进行记录。\n\n',
+    '### 代码\n\n所有更改现在一致地处理四个 DSML wrapper 变体。\n\n现在提交已暂存的更改。\n\n',
+    '<|DSML|tool_calls>\n',
+    '  <|DSML|invoke name="Bash">\n',
+    '    <|DSML|parameter name="command"><![CDATA[git commit -m "$(cat <<\'EOF\'\nfeat: expand DSML tool-call alias and fence handling\nEOF\n)"]]></|DSML|parameter>\n',
+    '    <|DSML|parameter name="description"><![CDATA[Commit staged changes]]></|DSML|parameter>\n',
+    '  </|DSML|invoke>\n',
+    '</|DSML|tool_calls>\n\n补充',
+  ], ['Bash']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(text.includes('它只提到了 `<|DSML|tool_calls>` 和 canonical `<tool_calls>`。由于这涉及 API 兼容性'), true);
+  assert.equal(text.includes('补充'), true);
+  assert.equal(text.includes('<|DSML|invoke'), false);
+});
+
 test('parseToolCalls ignores JSON tool_calls payload (XML-only)', () => {
   const payload = JSON.stringify({
     tool_calls: [{ name: 'read_file', input: { path: 'README.MD' } }],
@@ -98,6 +318,22 @@ test('sieve emits tool_calls when XML tag spans multiple chunks', () => {
   assert.equal(finalCalls[0].name, 'read_file');
 });
 
+test('sieve emits tool_calls when DSML tag spans multiple chunks', () => {
+  const events = runSieve(
+    [
+      '<|DSML|tool',
+      '_calls><|DSML|invoke name="read_file">',
+      '<|DSML|parameter name="path">README.MD</|DSML|parameter></|DSML|invoke></|DSML|tool_calls>',
+    ],
+    ['read_file'],
+  );
+  const leakedText = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(leakedText, '');
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'read_file');
+});
+
 test('sieve keeps long XML tool calls buffered until the closing tag arrives', () => {
   const longContent = 'x'.repeat(4096);
   const splitAt = longContent.length / 2;
@@ -116,6 +352,23 @@ test('sieve keeps long XML tool calls buffered until the closing tag arrives', (
   assert.equal(finalCalls.length, 1);
   assert.equal(finalCalls[0].name, 'write_to_file');
   assert.equal(finalCalls[0].input.content, longContent);
+});
+
+test('sieve recovers when CDATA never closes inside a valid wrapper', () => {
+  const events = runSieve(
+    [
+      '<tool_calls>\n  <invoke name="Write">\n    <parameter name="content"><![CDATA[',
+      'hello world',
+      '</parameter>\n  </invoke>\n</tool_calls>',
+    ],
+    ['Write'],
+  );
+  const leakedText = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'Write');
+  assert.equal(finalCalls[0].input.content, 'hello world');
+  assert.equal(leakedText, '');
 });
 
 test('sieve keeps CDATA tool examples buffered until the outer closing tag arrives', () => {

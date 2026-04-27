@@ -2,74 +2,86 @@ package toolstream
 
 import (
 	"ds2api/internal/toolcall"
-	"regexp"
 	"strings"
 )
 
-// --- XML tool call support for the streaming sieve ---
-
-//nolint:unused // kept as explicit tag inventory for future XML sieve refinements.
-var xmlToolCallClosingTags = []string{"</tool_calls>"}
-var xmlToolCallOpeningTags = []string{"<tool_calls", "<invoke"}
-
-// xmlToolCallTagPairs maps each opening tag to its expected closing tag.
-// Order matters: longer/wrapper tags must be checked first.
-var xmlToolCallTagPairs = []struct{ open, close string }{
-	{"<tool_calls", "</tool_calls>"},
-}
-
-// xmlToolCallBlockPattern matches a complete canonical XML tool call block.
-//
-//nolint:unused // reserved for future fast-path XML block detection.
-var xmlToolCallBlockPattern = regexp.MustCompile(`(?is)(<tool_calls\b[^>]*>\s*(?:.*?)\s*</tool_calls>)`)
-
-// xmlToolTagsToDetect is the set of XML tag prefixes used by findToolSegmentStart.
-var xmlToolTagsToDetect = []string{"<tool_calls>", "<tool_calls\n", "<tool_calls ", "<invoke ", "<invoke\n", "<invoke\t", "<invoke\r"}
-
 // consumeXMLToolCapture tries to extract complete XML tool call blocks from captured text.
 func consumeXMLToolCapture(captured string, toolNames []string) (prefix string, calls []toolcall.ParsedToolCall, suffix string, ready bool) {
-	lower := strings.ToLower(captured)
-	// Find the FIRST matching open/close pair for the canonical wrapper.
-	for _, pair := range xmlToolCallTagPairs {
-		openIdx := strings.Index(lower, pair.open)
-		if openIdx < 0 {
+	anyOpenFound := false
+	type candidate struct {
+		start  int
+		prefix string
+		calls  []toolcall.ParsedToolCall
+		suffix string
+	}
+	type rejectedBlock struct {
+		start  int
+		prefix string
+		suffix string
+	}
+	var best *candidate
+	var rejected *rejectedBlock
+
+	// Scan every recognized tool tag occurrence. Prose can mention a wrapper
+	// tag before the actual tool block, including the same variant as the real
+	// block. We only accept complete tool_calls wrappers that parse cleanly.
+	for searchFrom := 0; searchFrom < len(captured); {
+		tag, ok := toolcall.FindToolMarkupTagOutsideIgnored(captured, searchFrom)
+		if !ok {
+			break
+		}
+		if tag.Closing || tag.Name != "tool_calls" {
+			searchFrom = tag.End + 1
 			continue
 		}
-		// Find the matching closing tag outside CDATA. Long write-file tool
-		// calls often contain XML examples in CDATA, including </tool_calls>.
-		closeIdx := findXMLCloseOutsideCDATA(captured, pair.close, openIdx+len(pair.open))
-		if closeIdx < 0 {
-			// Opening tag is present but its specific closing tag hasn't arrived.
-			// Return not-ready so we keep buffering until the canonical wrapper closes.
-			return "", nil, "", false
+		closeTag, ok := toolcall.FindMatchingToolMarkupClose(captured, tag)
+		if !ok {
+			anyOpenFound = true
+			searchFrom = tag.End + 1
+			continue
 		}
-		closeEnd := closeIdx + len(pair.close)
 
-		xmlBlock := captured[openIdx:closeEnd]
-		prefixPart := captured[:openIdx]
-		suffixPart := captured[closeEnd:]
+		xmlBlock := captured[tag.Start : closeTag.End+1]
+		prefixPart := captured[:tag.Start]
+		suffixPart := captured[closeTag.End+1:]
 		parsed := toolcall.ParseToolCalls(xmlBlock, toolNames)
 		if len(parsed) > 0 {
 			prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
-			return prefixPart, parsed, suffixPart, true
-		}
-		// If this block failed to become a tool call, pass it through as text.
-		return prefixPart + xmlBlock, nil, suffixPart, true
-	}
-	if !strings.Contains(lower, "<tool_calls") {
-		invokeIdx := strings.Index(lower, "<invoke")
-		closeIdx := findXMLCloseOutsideCDATA(captured, "</tool_calls>", invokeIdx)
-		if invokeIdx >= 0 && closeIdx > invokeIdx {
-			closeEnd := closeIdx + len("</tool_calls>")
-			xmlBlock := "<tool_calls>" + captured[invokeIdx:closeIdx] + "</tool_calls>"
-			prefixPart := captured[:invokeIdx]
-			suffixPart := captured[closeEnd:]
-			parsed := toolcall.ParseToolCalls(xmlBlock, toolNames)
-			if len(parsed) > 0 {
-				prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
-				return prefixPart, parsed, suffixPart, true
+			if best == nil || tag.Start < best.start {
+				best = &candidate{start: tag.Start, prefix: prefixPart, calls: parsed, suffix: suffixPart}
 			}
-			return prefixPart + captured[invokeIdx:closeEnd], nil, suffixPart, true
+			break
+		}
+		if rejected == nil || tag.Start < rejected.start {
+			rejected = &rejectedBlock{start: tag.Start, prefix: prefixPart + xmlBlock, suffix: suffixPart}
+		}
+		searchFrom = tag.End + 1
+	}
+	if best != nil {
+		return best.prefix, best.calls, best.suffix, true
+	}
+	if anyOpenFound {
+		// At least one opening tag was found but none had a matching close tag.
+		// Keep buffering until a closing tag arrives.
+		return "", nil, "", false
+	}
+	if rejected != nil {
+		// If this block failed to become a tool call, pass it through as text.
+		return rejected.prefix, nil, rejected.suffix, true
+	}
+	if invokeTag, ok := findFirstToolMarkupTagByName(captured, 0, "invoke"); ok {
+		if wrapperOpen, ok := findFirstToolMarkupTagByName(captured, 0, "tool_calls"); !ok || wrapperOpen.Start > invokeTag.Start {
+			if closeTag, ok := findFirstToolMarkupTagByNameFrom(captured, invokeTag.Start+1, "tool_calls", true); ok && closeTag.Start > invokeTag.Start {
+				xmlBlock := "<tool_calls>" + captured[invokeTag.Start:closeTag.End+1]
+				prefixPart := captured[:invokeTag.Start]
+				suffixPart := captured[closeTag.End+1:]
+				parsed := toolcall.ParseToolCalls(xmlBlock, toolNames)
+				if len(parsed) > 0 {
+					prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
+					return prefixPart, parsed, suffixPart, true
+				}
+				return prefixPart + captured[invokeTag.Start:closeTag.End+1], nil, suffixPart, true
+			}
 		}
 	}
 	return "", nil, "", false
@@ -78,52 +90,54 @@ func consumeXMLToolCapture(captured string, toolNames []string) (prefix string, 
 // hasOpenXMLToolTag returns true if captured text contains an XML tool opening tag
 // whose SPECIFIC closing tag has not appeared yet.
 func hasOpenXMLToolTag(captured string) bool {
-	lower := strings.ToLower(captured)
-	for _, pair := range xmlToolCallTagPairs {
-		openIdx := strings.Index(lower, pair.open)
-		if openIdx >= 0 {
-			if findXMLCloseOutsideCDATA(captured, pair.close, openIdx+len(pair.open)) < 0 {
-				return true
-			}
+	for searchFrom := 0; searchFrom < len(captured); {
+		tag, ok := toolcall.FindToolMarkupTagOutsideIgnored(captured, searchFrom)
+		if !ok {
+			return false
 		}
+		if tag.Closing || tag.Name != "tool_calls" {
+			searchFrom = tag.End + 1
+			continue
+		}
+		if _, ok := toolcall.FindMatchingToolMarkupClose(captured, tag); !ok {
+			return true
+		}
+		searchFrom = tag.End + 1
 	}
 	return false
 }
 
-func findXMLCloseOutsideCDATA(s, closeTag string, start int) int {
-	if s == "" || closeTag == "" {
-		return -1
+func shouldKeepBareInvokeCapture(captured string) bool {
+	invokeTag, ok := findFirstToolMarkupTagByName(captured, 0, "invoke")
+	if !ok {
+		return false
 	}
-	if start < 0 {
-		start = 0
+	if wrapperOpen, ok := findFirstToolMarkupTagByName(captured, 0, "tool_calls"); ok && wrapperOpen.Start <= invokeTag.Start {
+		return false
 	}
-	lower := strings.ToLower(s)
-	target := strings.ToLower(closeTag)
-	for i := start; i < len(s); {
-		switch {
-		case strings.HasPrefix(lower[i:], "<![cdata["):
-			end := strings.Index(lower[i+len("<![cdata["):], "]]>")
-			if end < 0 {
-				return -1
-			}
-			i += len("<![cdata[") + end + len("]]>")
-		case strings.HasPrefix(lower[i:], "<!--"):
-			end := strings.Index(lower[i+len("<!--"):], "-->")
-			if end < 0 {
-				return -1
-			}
-			i += len("<!--") + end + len("-->")
-		case strings.HasPrefix(lower[i:], target):
-			return i
-		default:
-			i++
-		}
+	if closeTag, ok := findFirstToolMarkupTagByNameFrom(captured, invokeTag.Start+1, "tool_calls", true); ok && closeTag.Start > invokeTag.Start {
+		return true
 	}
-	return -1
+	startEnd := invokeTag.End
+	if startEnd < 0 {
+		return true
+	}
+	body := captured[startEnd+1:]
+	trimmedBody := strings.TrimLeft(body, " \t\r\n")
+	if trimmedBody == "" {
+		return true
+	}
+
+	if invokeCloseTag, ok := findFirstToolMarkupTagByNameFrom(captured, startEnd+1, "invoke", true); ok {
+		return strings.TrimSpace(captured[invokeCloseTag.End+1:]) == ""
+	}
+
+	trimmedLower := strings.ToLower(trimmedBody)
+	return strings.HasPrefix(trimmedLower, "<parameter") ||
+		strings.HasPrefix(trimmedLower, "{") ||
+		strings.HasPrefix(trimmedLower, "[")
 }
 
-// findPartialXMLToolTagStart checks if the string ends with a partial canonical
-// XML wrapper tag (e.g., "<too") and returns the position of the '<'.
 func findPartialXMLToolTagStart(s string) int {
 	lastLT := strings.LastIndex(s, "<")
 	if lastLT < 0 {
@@ -135,13 +149,18 @@ func findPartialXMLToolTagStart(s string) int {
 		return -1
 	}
 	lowerTail := strings.ToLower(tail)
-	// Check if the tail is a prefix of any known XML tool tag.
-	for _, tag := range xmlToolCallOpeningTags {
-		tagWithLT := tag
-		if !strings.HasPrefix(tagWithLT, "<") {
-			tagWithLT = "<" + tagWithLT
-		}
-		if strings.HasPrefix(tagWithLT, lowerTail) {
+	for _, tag := range []string{
+		"<tool_calls", "<invoke", "<parameter",
+		"<|tool_calls", "<|invoke", "<|parameter",
+		"<｜tool_calls", "<｜invoke", "<｜parameter",
+		"<|dsml|tool_calls", "<|dsml|invoke", "<|dsml|parameter",
+		"<dsmltool_calls", "<dsmlinvoke", "<dsmlparameter",
+		"<dsml tool_calls", "<dsml invoke", "<dsml parameter",
+		"<dsml|tool_calls", "<dsml|invoke", "<dsml|parameter",
+		"<|dsmltool_calls", "<|dsmlinvoke", "<|dsmlparameter",
+		"<|dsml tool_calls", "<|dsml invoke", "<|dsml parameter",
+	} {
+		if strings.HasPrefix(tag, lowerTail) {
 			return lastLT
 		}
 	}

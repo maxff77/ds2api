@@ -11,6 +11,7 @@ func TestStandardRequestCompletionPayloadSetsModelTypeFromResolvedModel(t *testi
 		modelType string
 	}{
 		{name: "default", model: "deepseek-v4-flash", thinking: false, search: false, modelType: "default"},
+		{name: "default_nothinking", model: "deepseek-v4-flash-nothinking", thinking: false, search: false, modelType: "default"},
 		{name: "expert", model: "deepseek-v4-pro", thinking: true, search: false, modelType: "expert"},
 		{name: "vision", model: "deepseek-v4-vision-search", thinking: false, search: true, modelType: "vision"},
 	}

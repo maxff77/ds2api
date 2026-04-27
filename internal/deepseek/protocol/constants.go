@@ -3,6 +3,7 @@ package protocol
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 )
 
 const (
@@ -21,15 +22,11 @@ const (
 	DeepSeekUploadTargetPath     = "/api/v0/file/upload_file"
 )
 
-var defaultBaseHeaders = map[string]string{
-	"Host":              "chat.deepseek.com",
-	"User-Agent":        "DeepSeek/1.8.0 Android/35",
-	"Accept":            "application/json",
-	"Content-Type":      "application/json",
-	"x-client-platform": "android",
-	"x-client-version":  "1.8.0",
-	"x-client-locale":   "zh_CN",
-	"accept-charset":    "UTF-8",
+var defaultStaticBaseHeaders = map[string]string{
+	"Host":           "chat.deepseek.com",
+	"Accept":         "application/json",
+	"Content-Type":   "application/json",
+	"accept-charset": "UTF-8",
 }
 
 var defaultSkipContainsPatterns = []string{
@@ -47,11 +44,21 @@ var defaultSkipExactPaths = []string{
 	"response/search_status",
 }
 
-var BaseHeaders = cloneStringMap(defaultBaseHeaders)
+var ClientVersion string
+var BaseHeaders = map[string]string{}
 var SkipContainsPatterns = cloneStringSlice(defaultSkipContainsPatterns)
 var SkipExactPathSet = toStringSet(defaultSkipExactPaths)
 
+type clientConstants struct {
+	Name            string `json:"name"`
+	Platform        string `json:"platform"`
+	Version         string `json:"version"`
+	AndroidAPILevel string `json:"android_api_level"`
+	Locale          string `json:"locale"`
+}
+
 type sharedConstants struct {
+	Client              clientConstants   `json:"client"`
 	BaseHeaders         map[string]string `json:"base_headers"`
 	SkipContainsPattern []string          `json:"skip_contains_patterns"`
 	SkipExactPaths      []string          `json:"skip_exact_paths"`
@@ -63,17 +70,66 @@ var sharedConstantsJSON []byte
 func init() {
 	cfg := sharedConstants{}
 	if err := json.Unmarshal(sharedConstantsJSON, &cfg); err != nil {
-		return
+		panic(fmt.Errorf("load DeepSeek shared constants: %w", err))
 	}
-	if len(cfg.BaseHeaders) > 0 {
-		BaseHeaders = cloneStringMap(cfg.BaseHeaders)
-	}
+	applySharedConstants(cfg)
+}
+
+func applySharedConstants(cfg sharedConstants) {
+	client := normalizeClientConstants(cfg.Client)
+	ClientVersion = client.Version
+	BaseHeaders = buildBaseHeaders(client, cfg.BaseHeaders)
+	SkipContainsPatterns = cloneStringSlice(defaultSkipContainsPatterns)
 	if len(cfg.SkipContainsPattern) > 0 {
 		SkipContainsPatterns = cloneStringSlice(cfg.SkipContainsPattern)
 	}
+	SkipExactPathSet = toStringSet(defaultSkipExactPaths)
 	if len(cfg.SkipExactPaths) > 0 {
 		SkipExactPathSet = toStringSet(cfg.SkipExactPaths)
 	}
+}
+
+func normalizeClientConstants(in clientConstants) clientConstants {
+	if in.Name == "" {
+		in.Name = "DeepSeek"
+	}
+	if in.Platform == "" {
+		in.Platform = "android"
+	}
+	if in.AndroidAPILevel == "" {
+		in.AndroidAPILevel = "35"
+	}
+	if in.Locale == "" {
+		in.Locale = "zh_CN"
+	}
+	return in
+}
+
+func buildBaseHeaders(client clientConstants, overrides map[string]string) map[string]string {
+	out := cloneStringMap(defaultStaticBaseHeaders)
+	for k, v := range overrides {
+		if k == "" || v == "" {
+			continue
+		}
+		out[k] = v
+	}
+	if client.Name != "" && client.Version != "" {
+		userAgent := client.Name + "/" + client.Version
+		if client.Platform == "android" && client.AndroidAPILevel != "" {
+			userAgent += " Android/" + client.AndroidAPILevel
+		}
+		out["User-Agent"] = userAgent
+	}
+	if client.Platform != "" {
+		out["x-client-platform"] = client.Platform
+	}
+	if client.Version != "" {
+		out["x-client-version"] = client.Version
+	}
+	if client.Locale != "" {
+		out["x-client-locale"] = client.Locale
+	}
+	return out
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -103,6 +159,6 @@ func toStringSet(in []string) map[string]struct{} {
 
 const (
 	KeepAliveTimeout  = 5
-	StreamIdleTimeout = 30
+	StreamIdleTimeout = 90
 	MaxKeepaliveCount = 10
 )

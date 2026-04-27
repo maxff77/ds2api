@@ -116,6 +116,18 @@ func TestConvertClaudeToDeepSeekUsesGlobalAliasResolution(t *testing.T) {
 	}
 }
 
+func TestConvertClaudeToDeepSeekUsesNoThinkingAliasResolution(t *testing.T) {
+	store := config.LoadStore()
+	req := map[string]any{
+		"model":    "claude-sonnet-4-6-nothinking",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+	}
+	out := ConvertClaudeToDeepSeek(req, store)
+	if out["model"] != "deepseek-v4-flash-nothinking" {
+		t.Fatalf("expected noThinking alias resolution, got model=%q", out["model"])
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || (len(s) > 0 && (indexOf(s, sub) >= 0)))
 }

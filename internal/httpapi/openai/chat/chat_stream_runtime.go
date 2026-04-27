@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"ds2api/internal/toolcall"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -33,11 +32,13 @@ type chatStreamRuntime struct {
 	toolCallsEmitted     bool
 	toolCallsDoneEmitted bool
 
-	toolSieve         toolstream.State
-	streamToolCallIDs map[int]string
-	streamToolNames   map[int]string
-	thinking          strings.Builder
-	text              strings.Builder
+	toolSieve             toolstream.State
+	streamToolCallIDs     map[int]string
+	streamToolNames       map[int]string
+	thinking              strings.Builder
+	toolDetectionThinking strings.Builder
+	text                  strings.Builder
+	responseMessageID     int
 
 	finalThinking     string
 	finalText         string
@@ -128,12 +129,16 @@ func (s *chatStreamRuntime) resetStreamToolCallState() {
 	s.streamToolNames = map[int]string{}
 }
 
-func (s *chatStreamRuntime) finalize(finishReason string) {
+func (s *chatStreamRuntime) finalize(finishReason string, deferEmptyOutput bool) bool {
+	s.finalErrorStatus = 0
+	s.finalErrorMessage = ""
+	s.finalErrorCode = ""
 	finalThinking := s.thinking.String()
+	finalToolDetectionThinking := s.toolDetectionThinking.String()
 	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
 	s.finalThinking = finalThinking
 	s.finalText = finalText
-	detected := toolcall.ParseStandaloneToolCallsDetailed(finalText, s.toolNames)
+	detected := detectAssistantToolCalls(finalText, finalThinking, finalToolDetectionThinking, s.toolNames)
 	if len(detected.Calls) > 0 && !s.toolCallsDoneEmitted {
 		finishReason = "tool_calls"
 		delta := map[string]any{
@@ -203,8 +208,14 @@ func (s *chatStreamRuntime) finalize(finishReason string) {
 	}
 	if len(detected.Calls) == 0 && !s.toolCallsEmitted && strings.TrimSpace(finalText) == "" {
 		status, message, code := upstreamEmptyOutputDetail(finishReason == "content_filter", finalText, finalThinking)
+		if deferEmptyOutput {
+			s.finalErrorStatus = status
+			s.finalErrorMessage = message
+			s.finalErrorCode = code
+			return false
+		}
 		s.sendFailedChunk(status, message, code)
-		return
+		return true
 	}
 	usage := openaifmt.BuildChatUsage(s.finalPrompt, finalThinking, finalText)
 	s.finalFinishReason = finishReason
@@ -217,11 +228,15 @@ func (s *chatStreamRuntime) finalize(finishReason string) {
 		usage,
 	))
 	s.sendDone()
+	return true
 }
 
 func (s *chatStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedDecision {
 	if !parsed.Parsed {
 		return streamengine.ParsedDecision{}
+	}
+	if parsed.ResponseMessageID > 0 {
+		s.responseMessageID = parsed.ResponseMessageID
 	}
 	if parsed.ContentFilter {
 		if strings.TrimSpace(s.text.String()) == "" {
@@ -238,6 +253,12 @@ func (s *chatStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedD
 
 	newChoices := make([]map[string]any, 0, len(parsed.Parts))
 	contentSeen := false
+	for _, p := range parsed.ToolDetectionThinkingParts {
+		trimmed := sse.TrimContinuationOverlap(s.toolDetectionThinking.String(), p.Text)
+		if trimmed != "" {
+			s.toolDetectionThinking.WriteString(trimmed)
+		}
+	}
 	for _, p := range parsed.Parts {
 		cleanedText := cleanVisibleOutput(p.Text, s.stripReferenceMarkers)
 		if s.searchEnabled && sse.IsCitation(cleanedText) {

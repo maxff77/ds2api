@@ -84,7 +84,16 @@ func (h *openAITestSurface) ChatCompletions(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *openAITestSurface) applyHistorySplit(ctx context.Context, a *auth.RequestAuth, stdReq promptcompat.StandardRequest) (promptcompat.StandardRequest, error) {
-	return history.Service{Store: h.Store, DS: h.DS}.Apply(ctx, a, stdReq)
+	stdReq = shared.ApplyThinkingInjection(h.Store, stdReq)
+	svc := history.Service{Store: h.Store, DS: h.DS}
+	out, err := svc.ApplyCurrentInputFile(ctx, a, stdReq)
+	if err != nil {
+		return stdReq, err
+	}
+	if out.CurrentInputFileApplied {
+		return out, nil
+	}
+	return svc.Apply(ctx, a, out)
 }
 
 func (h *openAITestSurface) preprocessInlineFileInputs(ctx context.Context, a *auth.RequestAuth, req map[string]any) error {

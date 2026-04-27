@@ -11,7 +11,8 @@
 3. [接口文档（API）](../API.md)
 4. [部署指南](./DEPLOY.md)
 5. [测试指南](./TESTING.md)
-6. [贡献指南](./CONTRIBUTING.md)
+6. [开发者速查](./DEVELOPMENT.md)
+7. [贡献指南](./CONTRIBUTING.md)
 
 ### 专题文档
 
@@ -41,7 +42,8 @@ Recommended reading order:
 3. [API reference](../API.en.md)
 4. [Deployment guide](./DEPLOY.en.md)
 5. [Testing guide](./TESTING.md)
-6. [Contributing guide](./CONTRIBUTING.en.md)
+6. [Developer quick reference](./DEVELOPMENT.md)
+7. [Contributing guide](./CONTRIBUTING.en.md)
 
 ### Topical docs
 

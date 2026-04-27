@@ -22,6 +22,15 @@ func TestGetModelRouteDirectAndAlias(t *testing.T) {
 		}
 	})
 
+	t.Run("direct_nothinking", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models/deepseek-v4-flash-nothinking", nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("direct_expert", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/models/deepseek-v4-pro", nil)
 		rec := httptest.NewRecorder()
@@ -46,6 +55,15 @@ func TestGetModelRouteDirectAndAlias(t *testing.T) {
 		r.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 for alias, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("alias_nothinking", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models/claude-sonnet-4-6-nothinking", nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for nothinking alias, got %d body=%s", rec.Code, rec.Body.String())
 		}
 	})
 }

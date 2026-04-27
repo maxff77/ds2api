@@ -12,12 +12,16 @@ import (
 func BuildResponseObject(responseID, model, finalPrompt, finalThinking, finalText string, toolNames []string) map[string]any {
 	// Strict mode: only standalone, structured tool-call payloads are treated
 	// as executable tool calls.
-	detected := toolcall.ParseStandaloneToolCallsDetailed(finalText, toolNames)
+	detected := toolcall.ParseAssistantToolCallsDetailed(finalText, finalThinking, toolNames)
+	return BuildResponseObjectWithToolCalls(responseID, model, finalPrompt, finalThinking, finalText, detected.Calls)
+}
+
+func BuildResponseObjectWithToolCalls(responseID, model, finalPrompt, finalThinking, finalText string, detected []toolcall.ParsedToolCall) map[string]any {
 	exposedOutputText := finalText
 	output := make([]any, 0, 2)
-	if len(detected.Calls) > 0 {
+	if len(detected) > 0 {
 		exposedOutputText = ""
-		output = append(output, toResponsesFunctionCallItems(detected.Calls)...)
+		output = append(output, toResponsesFunctionCallItems(detected)...)
 	} else {
 		content := make([]any, 0, 2)
 		if finalThinking != "" {

@@ -22,6 +22,9 @@ func normalizeGeminiRequest(store ConfigReader, routeModel string, req map[strin
 	}
 	defaultThinkingEnabled, searchEnabled, _ := config.GetModelConfig(resolvedModel)
 	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
+	if config.IsNoThinkingModel(resolvedModel) {
+		thinkingEnabled = false
+	}
 
 	messagesRaw := geminiMessagesFromRequest(req)
 	if len(messagesRaw) == 0 {

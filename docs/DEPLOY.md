@@ -70,9 +70,9 @@ cp config.example.json config.json
 
 | 平台 | 架构 | 文件格式 |
 | --- | --- | --- |
-| Linux | amd64, arm64 | `.tar.gz` |
+| Linux | amd64, arm64, armv7 | `.tar.gz` |
 | macOS | amd64, arm64 | `.tar.gz` |
-| Windows | amd64 | `.zip` |
+| Windows | amd64, arm64 | `.zip` |
 
 每个压缩包包含：
 
@@ -548,7 +548,7 @@ curl -s http://127.0.0.1:5001/readyz
 
 # 3. 模型列表
 curl -s http://127.0.0.1:5001/v1/models
-# 预期: {"object":"list","data":[...]}
+# 预期: {"object":"list","data":[...]}（包含 `*-nothinking` 变体）
 
 # 4. 管理台页面（如果已构建 WebUI）
 curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/admin

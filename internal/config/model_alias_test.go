@@ -13,6 +13,13 @@ func TestResolveModelDirectDeepSeek(t *testing.T) {
 	}
 }
 
+func TestResolveModelDirectDeepSeekNoThinking(t *testing.T) {
+	got, ok := ResolveModel(nil, "deepseek-v4-flash-nothinking")
+	if !ok || got != "deepseek-v4-flash-nothinking" {
+		t.Fatalf("expected deepseek-v4-flash-nothinking, got ok=%v model=%q", ok, got)
+	}
+}
+
 func TestResolveModelAlias(t *testing.T) {
 	got, ok := ResolveModel(nil, "gpt-4.1")
 	if !ok || got != "deepseek-v4-flash" {
@@ -31,6 +38,13 @@ func TestResolveLatestClaudeAlias(t *testing.T) {
 	got, ok := ResolveModel(nil, "claude-sonnet-4-6")
 	if !ok || got != "deepseek-v4-flash" {
 		t.Fatalf("expected alias claude-sonnet-4-6 -> deepseek-v4-flash, got ok=%v model=%q", ok, got)
+	}
+}
+
+func TestResolveLatestClaudeAliasNoThinking(t *testing.T) {
+	got, ok := ResolveModel(nil, "claude-sonnet-4-6-nothinking")
+	if !ok || got != "deepseek-v4-flash-nothinking" {
+		t.Fatalf("expected alias claude-sonnet-4-6-nothinking -> deepseek-v4-flash-nothinking, got ok=%v model=%q", ok, got)
 	}
 }
 
@@ -65,6 +79,13 @@ func TestResolveModelHeuristicReasoner(t *testing.T) {
 	got, ok := ResolveModel(nil, "o3-super")
 	if !ok || got != "deepseek-v4-pro" {
 		t.Fatalf("expected heuristic reasoner, got ok=%v model=%q", ok, got)
+	}
+}
+
+func TestResolveModelHeuristicReasonerNoThinking(t *testing.T) {
+	got, ok := ResolveModel(nil, "o3-super-nothinking")
+	if !ok || got != "deepseek-v4-pro-nothinking" {
+		t.Fatalf("expected heuristic reasoner nothinking, got ok=%v model=%q", ok, got)
 	}
 }
 

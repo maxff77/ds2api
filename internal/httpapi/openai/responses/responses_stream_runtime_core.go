@@ -34,24 +34,29 @@ type responsesStreamRuntime struct {
 	toolCallsEmitted     bool
 	toolCallsDoneEmitted bool
 
-	sieve             toolstream.State
-	thinking          strings.Builder
-	text              strings.Builder
-	visibleText       strings.Builder
-	streamToolCallIDs map[int]string
-	functionItemIDs   map[int]string
-	functionOutputIDs map[int]int
-	functionArgs      map[int]string
-	functionDone      map[int]bool
-	functionAdded     map[int]bool
-	functionNames     map[int]string
-	messageItemID     string
-	messageOutputID   int
-	nextOutputID      int
-	messageAdded      bool
-	messagePartAdded  bool
-	sequence          int
-	failed            bool
+	sieve                 toolstream.State
+	thinking              strings.Builder
+	toolDetectionThinking strings.Builder
+	text                  strings.Builder
+	visibleText           strings.Builder
+	responseMessageID     int
+	streamToolCallIDs     map[int]string
+	functionItemIDs       map[int]string
+	functionOutputIDs     map[int]int
+	functionArgs          map[int]string
+	functionDone          map[int]bool
+	functionAdded         map[int]bool
+	functionNames         map[int]string
+	messageItemID         string
+	messageOutputID       int
+	nextOutputID          int
+	messageAdded          bool
+	messagePartAdded      bool
+	sequence              int
+	failed                bool
+	finalErrorStatus      int
+	finalErrorMessage     string
+	finalErrorCode        string
 
 	persistResponse func(obj map[string]any)
 }
@@ -102,6 +107,9 @@ func newResponsesStreamRuntime(
 
 func (s *responsesStreamRuntime) failResponse(status int, message, code string) {
 	s.failed = true
+	s.finalErrorStatus = status
+	s.finalErrorMessage = message
+	s.finalErrorCode = code
 	failedResp := map[string]any{
 		"id":          s.responseID,
 		"type":        "response",
@@ -125,15 +133,20 @@ func (s *responsesStreamRuntime) failResponse(status int, message, code string) 
 	s.sendDone()
 }
 
-func (s *responsesStreamRuntime) finalize() {
+func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput bool) bool {
+	s.failed = false
+	s.finalErrorStatus = 0
+	s.finalErrorMessage = ""
+	s.finalErrorCode = ""
 	finalThinking := s.thinking.String()
+	finalToolDetectionThinking := s.toolDetectionThinking.String()
 	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
 
 	if s.bufferToolContent {
 		s.processToolStreamEvents(toolstream.Flush(&s.sieve, s.toolNames), true, true)
 	}
 
-	textParsed := toolcall.ParseStandaloneToolCallsDetailed(finalText, s.toolNames)
+	textParsed := detectAssistantToolCalls(finalText, finalThinking, finalToolDetectionThinking, s.toolNames)
 	detected := textParsed.Calls
 	s.logToolPolicyRejections(textParsed)
 
@@ -148,12 +161,18 @@ func (s *responsesStreamRuntime) finalize() {
 
 	if s.toolChoice.IsRequired() && len(detected) == 0 {
 		s.failResponse(http.StatusUnprocessableEntity, "tool_choice requires at least one valid tool call.", "tool_choice_violation")
-		return
+		return true
 	}
 	if len(detected) == 0 && strings.TrimSpace(finalText) == "" {
-		status, message, code := upstreamEmptyOutputDetail(false, finalText, finalThinking)
+		status, message, code := upstreamEmptyOutputDetail(finishReason == "content_filter", finalText, finalThinking)
+		if deferEmptyOutput {
+			s.finalErrorStatus = status
+			s.finalErrorMessage = message
+			s.finalErrorCode = code
+			return false
+		}
 		s.failResponse(status, message, code)
-		return
+		return true
 	}
 	s.closeIncompleteFunctionItems()
 
@@ -163,6 +182,7 @@ func (s *responsesStreamRuntime) finalize() {
 	}
 	s.sendEvent("response.completed", openaifmt.BuildResponsesCompletedPayload(obj))
 	s.sendDone()
+	return true
 }
 
 func (s *responsesStreamRuntime) logToolPolicyRejections(textParsed toolcall.ToolCallParseResult) {
@@ -186,11 +206,23 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 	if !parsed.Parsed {
 		return streamengine.ParsedDecision{}
 	}
-	if parsed.ContentFilter || parsed.ErrorMessage != "" || parsed.Stop {
+	if parsed.ResponseMessageID > 0 {
+		s.responseMessageID = parsed.ResponseMessageID
+	}
+	if parsed.ContentFilter || parsed.ErrorMessage != "" {
+		return streamengine.ParsedDecision{Stop: true, StopReason: streamengine.StopReason("content_filter")}
+	}
+	if parsed.Stop {
 		return streamengine.ParsedDecision{Stop: true}
 	}
 
 	contentSeen := false
+	for _, p := range parsed.ToolDetectionThinkingParts {
+		trimmed := sse.TrimContinuationOverlap(s.toolDetectionThinking.String(), p.Text)
+		if trimmed != "" {
+			s.toolDetectionThinking.WriteString(trimmed)
+		}
+	}
 	for _, p := range parsed.Parts {
 		cleanedText := cleanVisibleOutput(p.Text, s.stripReferenceMarkers)
 		if cleanedText == "" {

@@ -66,6 +66,44 @@ func (m streamStatusDSStub) DeleteAllSessionsForToken(_ context.Context, _ strin
 	return nil
 }
 
+type streamStatusDSSeqStub struct {
+	resps    []*http.Response
+	payloads []map[string]any
+}
+
+func (m *streamStatusDSSeqStub) CreateSession(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
+	return "session-id", nil
+}
+
+func (m *streamStatusDSSeqStub) GetPow(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
+	return "pow", nil
+}
+
+func (m *streamStatusDSSeqStub) UploadFile(_ context.Context, _ *auth.RequestAuth, _ dsclient.UploadFileRequest, _ int) (*dsclient.UploadFileResult, error) {
+	return &dsclient.UploadFileResult{ID: "file-id", Filename: "file.txt", Bytes: 1, Status: "uploaded"}, nil
+}
+
+func (m *streamStatusDSSeqStub) CallCompletion(_ context.Context, _ *auth.RequestAuth, payload map[string]any, _ string, _ int) (*http.Response, error) {
+	clone := make(map[string]any, len(payload))
+	for k, v := range payload {
+		clone[k] = v
+	}
+	m.payloads = append(m.payloads, clone)
+	idx := len(m.payloads) - 1
+	if idx >= len(m.resps) {
+		idx = len(m.resps) - 1
+	}
+	return m.resps[idx], nil
+}
+
+func (m *streamStatusDSSeqStub) DeleteSessionForToken(_ context.Context, _ string, _ string) (*dsclient.DeleteSessionResult, error) {
+	return &dsclient.DeleteSessionResult{Success: true}, nil
+}
+
+func (m *streamStatusDSSeqStub) DeleteAllSessionsForToken(_ context.Context, _ string) error {
+	return nil
+}
+
 func makeOpenAISSEHTTPResponse(lines ...string) *http.Response {
 	body := strings.Join(lines, "\n")
 	if !strings.HasSuffix(body, "\n") {
@@ -76,6 +114,12 @@ func makeOpenAISSEHTTPResponse(lines ...string) *http.Response {
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+func newOpenAITestRouter(h *openAITestSurface) http.Handler {
+	r := chi.NewRouter()
+	registerOpenAITestRoutes(r, h)
+	return r
 }
 
 func captureStatusMiddleware(statuses *[]int) func(http.Handler) http.Handler {
@@ -239,6 +283,133 @@ func TestChatCompletionsStreamEmitsFailureFrameWhenUpstreamOutputEmpty(t *testin
 	}
 }
 
+func TestChatCompletionsStreamRetriesEmptyOutputOnSameSession(t *testing.T) {
+	ds := &streamStatusDSSeqStub{resps: []*http.Response{
+		makeOpenAISSEHTTPResponse(`data: {"response_message_id":42,"p":"response/thinking_content","v":"plan"}`, "data: [DONE]"),
+		makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"visible"}`, "data: [DONE]"),
+	}}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{wideInput: true},
+		Auth:  streamStatusAuthStub{},
+		DS:    ds,
+	}
+	reqBody := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer direct-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newOpenAITestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ds.payloads) != 2 {
+		t.Fatalf("expected one synthetic retry call, got %d", len(ds.payloads))
+	}
+	if ds.payloads[0]["chat_session_id"] != ds.payloads[1]["chat_session_id"] {
+		t.Fatalf("expected retry to reuse session, payloads=%#v", ds.payloads)
+	}
+	retryPrompt := asString(ds.payloads[1]["prompt"])
+	if !strings.Contains(retryPrompt, "Previous reply had no visible output. Please regenerate the visible final answer or tool call now.") {
+		t.Fatalf("expected retry suffix in prompt, got %q", retryPrompt)
+	}
+	// Verify multi-turn chaining: retry must set parent_message_id from first call's response_message_id.
+	if parentID, ok := ds.payloads[1]["parent_message_id"].(int); !ok || parentID != 42 {
+		t.Fatalf("expected retry parent_message_id=42, got %#v", ds.payloads[1]["parent_message_id"])
+	}
+
+	frames, done := parseSSEDataFrames(t, rec.Body.String())
+	if !done {
+		t.Fatalf("expected [DONE], body=%s", rec.Body.String())
+	}
+	doneCount := strings.Count(rec.Body.String(), "data: [DONE]")
+	if doneCount != 1 {
+		t.Fatalf("expected one [DONE], got %d body=%s", doneCount, rec.Body.String())
+	}
+	if len(frames) != 3 {
+		t.Fatalf("expected reasoning, content, finish frames, got %#v body=%s", frames, rec.Body.String())
+	}
+	id := asString(frames[0]["id"])
+	for _, frame := range frames[1:] {
+		if asString(frame["id"]) != id {
+			t.Fatalf("expected same completion id across retry stream, frames=%#v", frames)
+		}
+	}
+	choices, _ := frames[1]["choices"].([]any)
+	choice, _ := choices[0].(map[string]any)
+	delta, _ := choice["delta"].(map[string]any)
+	if asString(delta["content"]) != "visible" {
+		t.Fatalf("expected retry content delta, got %#v body=%s", delta, rec.Body.String())
+	}
+}
+
+func TestChatCompletionsNonStreamRetriesThinkingOnlyOutput(t *testing.T) {
+	ds := &streamStatusDSSeqStub{resps: []*http.Response{
+		makeOpenAISSEHTTPResponse(`data: {"response_message_id":99,"p":"response/thinking_content","v":"plan"}`, "data: [DONE]"),
+		makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"visible"}`, "data: [DONE]"),
+	}}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{wideInput: true},
+		Auth:  streamStatusAuthStub{},
+		DS:    ds,
+	}
+	reqBody := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer direct-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newOpenAITestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after retry, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ds.payloads) != 2 {
+		t.Fatalf("expected one synthetic retry call, got %d", len(ds.payloads))
+	}
+	// Verify multi-turn chaining.
+	if parentID, ok := ds.payloads[1]["parent_message_id"].(int); !ok || parentID != 99 {
+		t.Fatalf("expected retry parent_message_id=99, got %#v", ds.payloads[1]["parent_message_id"])
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response failed: %v body=%s", err, rec.Body.String())
+	}
+	choices, _ := out["choices"].([]any)
+	choice, _ := choices[0].(map[string]any)
+	message, _ := choice["message"].(map[string]any)
+	if asString(message["content"]) != "visible" {
+		t.Fatalf("expected retry visible content, got %#v", message)
+	}
+	if !strings.Contains(asString(message["reasoning_content"]), "plan") {
+		t.Fatalf("expected first-attempt reasoning to be preserved, got %#v", message)
+	}
+}
+
+func TestChatCompletionsContentFilterDoesNotRetry(t *testing.T) {
+	ds := &streamStatusDSSeqStub{resps: []*http.Response{
+		makeOpenAISSEHTTPResponse(`data: {"code":"content_filter"}`),
+		makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"visible"}`, "data: [DONE]"),
+	}}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{wideInput: true},
+		Auth:  streamStatusAuthStub{},
+		DS:    ds,
+	}
+	reqBody := `{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer direct-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newOpenAITestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected content_filter 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ds.payloads) != 1 {
+		t.Fatalf("expected no retry on content_filter, got %d calls", len(ds.payloads))
+	}
+}
+
 func TestResponsesStreamUsageIgnoresBatchAccumulatedTokenUsage(t *testing.T) {
 	statuses := make([]int, 0, 1)
 	h := &openAITestSurface{
@@ -284,6 +455,94 @@ func TestResponsesStreamUsageIgnoresBatchAccumulatedTokenUsage(t *testing.T) {
 	}
 	if got, _ := usage["output_tokens"].(float64); int(got) == 190 {
 		t.Fatalf("expected upstream accumulated token usage to be ignored, got %#v", usage["output_tokens"])
+	}
+}
+
+func TestResponsesStreamRetriesThinkingOnlyOutput(t *testing.T) {
+	ds := &streamStatusDSSeqStub{resps: []*http.Response{
+		makeOpenAISSEHTTPResponse(`data: {"response_message_id":77,"p":"response/thinking_content","v":"plan"}`, "data: [DONE]"),
+		makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"visible"}`, "data: [DONE]"),
+	}}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{wideInput: true},
+		Auth:  streamStatusAuthStub{},
+		DS:    ds,
+	}
+	reqBody := `{"model":"deepseek-v4-pro","input":"hi","stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer direct-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newOpenAITestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ds.payloads) != 2 {
+		t.Fatalf("expected one synthetic retry call, got %d", len(ds.payloads))
+	}
+	// Verify multi-turn chaining.
+	if parentID, ok := ds.payloads[1]["parent_message_id"].(int); !ok || parentID != 77 {
+		t.Fatalf("expected retry parent_message_id=77, got %#v", ds.payloads[1]["parent_message_id"])
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "response.failed") {
+		t.Fatalf("did not expect premature response.failed, body=%s", body)
+	}
+	if !strings.Contains(body, "response.reasoning.delta") || !strings.Contains(body, "response.output_text.delta") || !strings.Contains(body, "response.completed") {
+		t.Fatalf("expected reasoning, text delta, and completed events, body=%s", body)
+	}
+	if strings.Count(body, "data: [DONE]") != 1 {
+		t.Fatalf("expected one [DONE], body=%s", body)
+	}
+}
+
+func TestResponsesNonStreamRetriesThinkingOnlyOutput(t *testing.T) {
+	ds := &streamStatusDSSeqStub{resps: []*http.Response{
+		makeOpenAISSEHTTPResponse(`data: {"response_message_id":88,"p":"response/thinking_content","v":"plan"}`, "data: [DONE]"),
+		makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"visible"}`, "data: [DONE]"),
+	}}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{wideInput: true},
+		Auth:  streamStatusAuthStub{},
+		DS:    ds,
+	}
+	reqBody := `{"model":"deepseek-v4-pro","input":"hi","stream":false}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer direct-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	newOpenAITestRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after retry, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ds.payloads) != 2 {
+		t.Fatalf("expected one synthetic retry call, got %d", len(ds.payloads))
+	}
+	// Verify multi-turn chaining.
+	if parentID, ok := ds.payloads[1]["parent_message_id"].(int); !ok || parentID != 88 {
+		t.Fatalf("expected retry parent_message_id=88, got %#v", ds.payloads[1]["parent_message_id"])
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response failed: %v body=%s", err, rec.Body.String())
+	}
+	if asString(out["output_text"]) != "visible" {
+		t.Fatalf("expected retry visible output_text, got %#v", out["output_text"])
+	}
+	output, _ := out["output"].([]any)
+	if len(output) == 0 {
+		t.Fatalf("expected output items, got %#v", out)
+	}
+	item, _ := output[0].(map[string]any)
+	content, _ := item["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("expected content entries, got %#v", item)
+	}
+	reasoning, _ := content[0].(map[string]any)
+	if asString(reasoning["type"]) != "reasoning" || !strings.Contains(asString(reasoning["text"]), "plan") {
+		t.Fatalf("expected preserved reasoning entry, got %#v", content)
 	}
 }
 

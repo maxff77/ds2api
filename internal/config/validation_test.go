@@ -46,6 +46,19 @@ func TestValidateConfigRejectsInvalidValues(t *testing.T) {
 			}},
 			want: "history_split.trigger_after_turns",
 		},
+		{
+			name: "current input file",
+			cfg:  Config{CurrentInputFile: CurrentInputFileConfig{MinChars: -1}},
+			want: "current_input_file.min_chars",
+		},
+		{
+			name: "split modes mutually exclusive",
+			cfg: Config{
+				HistorySplit:     HistorySplitConfig{Enabled: boolPtr(true)},
+				CurrentInputFile: CurrentInputFileConfig{Enabled: boolPtr(true)},
+			},
+			want: "cannot both be true",
+		},
 	}
 
 	for _, tc := range tests {
@@ -68,3 +81,5 @@ func TestValidateConfigAcceptsLegacyAutoDeleteSessions(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+func boolPtr(v bool) *bool { return &v }

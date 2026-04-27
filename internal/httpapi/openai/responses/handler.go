@@ -11,6 +11,7 @@ import (
 	"ds2api/internal/httpapi/openai/history"
 	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
+	"ds2api/internal/toolcall"
 	"ds2api/internal/toolstream"
 )
 
@@ -39,7 +40,16 @@ func (h *Handler) applyHistorySplit(ctx context.Context, a *auth.RequestAuth, st
 	if h == nil {
 		return stdReq, nil
 	}
-	return history.Service{Store: h.Store, DS: h.DS}.Apply(ctx, a, stdReq)
+	stdReq = shared.ApplyThinkingInjection(h.Store, stdReq)
+	svc := history.Service{Store: h.Store, DS: h.DS}
+	out, err := svc.ApplyCurrentInputFile(ctx, a, stdReq)
+	if err != nil {
+		return stdReq, err
+	}
+	if out.CurrentInputFileApplied {
+		return out, nil
+	}
+	return svc.Apply(ctx, a, out)
 }
 
 func (h *Handler) preprocessInlineFileInputs(ctx context.Context, a *auth.RequestAuth, req map[string]any) error {
@@ -103,6 +113,26 @@ func writeUpstreamEmptyOutputError(w http.ResponseWriter, text, thinking string,
 	return shared.WriteUpstreamEmptyOutputError(w, text, thinking, contentFilter)
 }
 
+func emptyOutputRetryEnabled() bool {
+	return shared.EmptyOutputRetryEnabled()
+}
+
+func emptyOutputRetryMaxAttempts() int {
+	return shared.EmptyOutputRetryMaxAttempts()
+}
+
+func clonePayloadForEmptyOutputRetry(payload map[string]any, parentMessageID int) map[string]any {
+	return shared.ClonePayloadForEmptyOutputRetry(payload, parentMessageID)
+}
+
+func usagePromptWithEmptyOutputRetry(originalPrompt string, retryAttempts int) string {
+	return shared.UsagePromptWithEmptyOutputRetry(originalPrompt, retryAttempts)
+}
+
 func filterIncrementalToolCallDeltasByAllowed(deltas []toolstream.ToolCallDelta, seenNames map[int]string) []toolstream.ToolCallDelta {
 	return shared.FilterIncrementalToolCallDeltasByAllowed(deltas, seenNames)
+}
+
+func detectAssistantToolCalls(text, exposedThinking, detectionThinking string, toolNames []string) toolcall.ToolCallParseResult {
+	return shared.DetectAssistantToolCalls(text, exposedThinking, detectionThinking, toolNames)
 }

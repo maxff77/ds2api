@@ -30,11 +30,6 @@ func MessagesPrepareWithThinking(messages []map[string]any, thinkingEnabled bool
 		Text string
 	}
 	processed := make([]block, 0, len(messages))
-	if thinkingEnabled {
-		if instruction := buildConversationContinuityInstructions(thinkingEnabled); strings.TrimSpace(instruction) != "" {
-			processed = append(processed, block{Role: "system", Text: instruction})
-		}
-	}
 	for _, m := range messages {
 		role, _ := m["role"].(string)
 		text := NormalizeContent(m["content"])
@@ -91,17 +86,6 @@ func formatRoleBlock(marker, text, endMarker string) string {
 		out += endMarker
 	}
 	return out
-}
-
-func buildConversationContinuityInstructions(thinkingEnabled bool) string {
-	lines := []string{
-		"Continue the conversation from the full prior context and the latest tool results.",
-		"Treat earlier messages as binding context; answer the user's current request as a continuation, not a restart.",
-	}
-	if thinkingEnabled {
-		lines = append(lines, "Keep reasoning internal. Do not leave the final user-facing answer only in reasoning; always provide the answer in visible assistant content.")
-	}
-	return strings.Join(lines, "\n")
 }
 
 func NormalizeContent(v any) string {

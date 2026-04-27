@@ -58,6 +58,33 @@ async function fetchStreamPrepare(req, rawBody) {
   };
 }
 
+async function fetchStreamPow(req, leaseID) {
+  const url = buildInternalGoURL(req);
+  url.searchParams.set('__stream_pow', '1');
+
+  const upstream = await fetch(url.toString(), {
+    method: 'POST',
+    headers: buildInternalGoHeaders(req, { withInternalToken: true, withContentType: true }),
+    body: Buffer.from(JSON.stringify({ lease_id: leaseID })),
+  });
+
+  const text = await upstream.text();
+  let body = {};
+  try {
+    body = JSON.parse(text || '{}');
+  } catch (_err) {
+    body = {};
+  }
+
+  return {
+    ok: upstream.ok,
+    status: upstream.status,
+    contentType: upstream.headers.get('content-type') || 'application/json',
+    text,
+    body,
+  };
+}
+
 function relayPreparedFailure(res, prep) {
   if (prep.status === 401 && looksLikeVercelAuthPage(prep.text)) {
     writeOpenAIError(
@@ -195,6 +222,7 @@ module.exports = {
   header,
   readRawBody,
   fetchStreamPrepare,
+  fetchStreamPow,
   relayPreparedFailure,
   safeReadText,
   buildInternalGoURL,

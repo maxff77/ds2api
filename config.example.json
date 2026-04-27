@@ -51,8 +51,16 @@
     "store_ttl_seconds": 900
   },
   "history_split": {
-    "enabled": true,
+    "enabled": false,
     "trigger_after_turns": 1
+  },
+  "current_input_file": {
+    "enabled": true,
+    "min_chars": 0
+  },
+  "thinking_injection": {
+    "enabled": true,
+    "prompt": ""
   },
   "embeddings": {
     "provider": "deterministic"
