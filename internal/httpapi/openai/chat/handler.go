@@ -42,20 +42,17 @@ func (h *Handler) compatStripReferenceMarkers() bool {
 	return shared.CompatStripReferenceMarkers(h.Store)
 }
 
-func (h *Handler) applyHistorySplit(ctx context.Context, a *auth.RequestAuth, stdReq promptcompat.StandardRequest) (promptcompat.StandardRequest, error) {
+func (h *Handler) applyCurrentInputFile(ctx context.Context, a *auth.RequestAuth, stdReq promptcompat.StandardRequest) (promptcompat.StandardRequest, error) {
 	if h == nil {
 		return stdReq, nil
 	}
 	stdReq = shared.ApplyThinkingInjection(h.Store, stdReq)
 	svc := history.Service{Store: h.Store, DS: h.DS}
 	out, err := svc.ApplyCurrentInputFile(ctx, a, stdReq)
-	if err != nil {
-		return stdReq, err
+	if err != nil || out.CurrentInputFileApplied {
+		return out, err
 	}
-	if out.CurrentInputFileApplied {
-		return out, nil
-	}
-	return svc.Apply(ctx, a, out)
+	return out, nil
 }
 
 func (h *Handler) preprocessInlineFileInputs(ctx context.Context, a *auth.RequestAuth, req map[string]any) error {
@@ -91,7 +88,7 @@ func writeOpenAIInlineFileError(w http.ResponseWriter, err error) {
 	files.WriteInlineFileError(w, err)
 }
 
-func mapHistorySplitError(err error) (int, string) {
+func mapCurrentInputFileError(err error) (int, string) {
 	return history.MapError(err)
 }
 

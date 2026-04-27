@@ -159,6 +159,82 @@ func TestParseToolCallsSupportsJSONScalarParameters(t *testing.T) {
 	}
 }
 
+func TestParseToolCallsTreatsItemOnlyParameterBodyAsArray(t *testing.T) {
+	text := strings.Join([]string{
+		`<|DSML|tool_calls>`,
+		`<|DSML|invoke name="AskUserQuestion">`,
+		`<|DSML|parameter name="questions">`,
+		`<item>`,
+		`<question><![CDATA[What would you like to do next?]]></question>`,
+		`<header><![CDATA[Next step]]></header>`,
+		`<options>`,
+		`<item><label><![CDATA[Run tests]]></label><description><![CDATA[Run the test suite]]></description></item>`,
+		`<item><label><![CDATA[Other task]]></label><description><![CDATA[Something else entirely]]></description></item>`,
+		`</options>`,
+		`<multiSelect>false</multiSelect>`,
+		`</item>`,
+		`</|DSML|parameter>`,
+		`</|DSML|invoke>`,
+		`</|DSML|tool_calls>`,
+	}, "\n")
+	calls := ParseToolCalls(text, []string{"AskUserQuestion"})
+	if len(calls) != 1 {
+		t.Fatalf("expected one AskUserQuestion call, got %#v", calls)
+	}
+	questions, ok := calls[0].Input["questions"].([]any)
+	if !ok || len(questions) != 1 {
+		t.Fatalf("expected questions to parse as array, got %#v", calls[0].Input["questions"])
+	}
+	first, ok := questions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first question object, got %#v", questions[0])
+	}
+	if first["question"] != "What would you like to do next?" || first["header"] != "Next step" || first["multiSelect"] != false {
+		t.Fatalf("unexpected question payload: %#v", first)
+	}
+	options, ok := first["options"].([]any)
+	if !ok || len(options) != 2 {
+		t.Fatalf("expected options to parse as array, got %#v", first["options"])
+	}
+}
+
+func TestParseToolCallsTreatsCDATAItemOnlyBodyAsArray(t *testing.T) {
+	todos := `<br>  <item><br>    <activeForm>Testing EnterWorktree tool</activeForm><br>    <content>Test EnterWorktree tool</content><br>    <status>in_progress</status><br>  </item><br>  <item><br>    <activeForm>Testing TodoWrite tool</activeForm><br>    <content>Test TodoWrite tool</content><br>    <status>completed</status><br>  </item><br>`
+	text := `<|DSML|tool_calls><|DSML|invoke name="TodoWrite"><|DSML|parameter name="todos"><![CDATA[` + todos + `]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>`
+	calls := ParseToolCalls(text, []string{"TodoWrite"})
+	if len(calls) != 1 {
+		t.Fatalf("expected one TodoWrite call, got %#v", calls)
+	}
+	items, ok := calls[0].Input["todos"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected todos CDATA item body to parse as array, got %#v", calls[0].Input["todos"])
+	}
+	first, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first todo object, got %#v", items[0])
+	}
+	if first["activeForm"] != "Testing EnterWorktree tool" || first["content"] != "Test EnterWorktree tool" || first["status"] != "in_progress" {
+		t.Fatalf("unexpected first todo: %#v", first)
+	}
+}
+
+func TestParseToolCallsTreatsCDATAObjectFragmentAsObject(t *testing.T) {
+	payload := `<question><![CDATA[Pick one]]></question><options><item><label><![CDATA[A]]></label></item><item><label><![CDATA[B]]></label></item></options>`
+	text := `<tool_calls><invoke name="AskUserQuestion"><parameter name="questions"><![CDATA[` + payload + `]]></parameter></invoke></tool_calls>`
+	calls := ParseToolCalls(text, []string{"AskUserQuestion"})
+	if len(calls) != 1 {
+		t.Fatalf("expected one AskUserQuestion call, got %#v", calls)
+	}
+	question, ok := calls[0].Input["questions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected CDATA XML object fragment to parse as object, got %#v", calls[0].Input["questions"])
+	}
+	options, ok := question["options"].([]any)
+	if question["question"] != "Pick one" || !ok || len(options) != 2 {
+		t.Fatalf("unexpected parsed question: %#v", question)
+	}
+}
+
 func TestParseToolCallsPreservesRawMalformedParams(t *testing.T) {
 	text := `<tool_calls><invoke name="execute_command"><parameter name="command">cd /root && git status</parameter></invoke></tool_calls>`
 	calls := ParseToolCalls(text, []string{"execute_command"})

@@ -47,7 +47,7 @@ func TestGetSettingsIncludesTokenRefreshInterval(t *testing.T) {
 	}
 }
 
-func TestGetSettingsIncludesHistorySplitDefaults(t *testing.T) {
+func TestGetSettingsIncludesCurrentInputFileDefaults(t *testing.T) {
 	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
 	req := httptest.NewRequest(http.MethodGet, "/admin/settings", nil)
 	rec := httptest.NewRecorder()
@@ -57,13 +57,6 @@ func TestGetSettingsIncludesHistorySplitDefaults(t *testing.T) {
 	}
 	var body map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	historySplit, _ := body["history_split"].(map[string]any)
-	if got := boolFrom(historySplit["enabled"]); got {
-		t.Fatalf("expected history_split.enabled=false, body=%v", body)
-	}
-	if got := intFrom(historySplit["trigger_after_turns"]); got != 1 {
-		t.Fatalf("expected history_split.trigger_after_turns=1, got %d body=%v", got, body)
-	}
 	currentInputFile, _ := body["current_input_file"].(map[string]any)
 	if got := boolFrom(currentInputFile["enabled"]); !got {
 		t.Fatalf("expected current_input_file.enabled=true, body=%v", body)
@@ -190,33 +183,6 @@ func TestUpdateSettingsWithoutRuntimeSkipsMergedRuntimeValidation(t *testing.T) 
 	}
 }
 
-func TestUpdateSettingsHistorySplit(t *testing.T) {
-	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
-	payload := map[string]any{
-		"history_split": map[string]any{
-			"enabled":             true,
-			"trigger_after_turns": 3,
-		},
-	}
-	b, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
-	rec := httptest.NewRecorder()
-	h.updateSettings(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	snap := h.Store.Snapshot()
-	if snap.HistorySplit.Enabled == nil || !*snap.HistorySplit.Enabled {
-		t.Fatalf("expected history_split.enabled=true, got %#v", snap.HistorySplit.Enabled)
-	}
-	if snap.HistorySplit.TriggerAfterTurns == nil || *snap.HistorySplit.TriggerAfterTurns != 3 {
-		t.Fatalf("expected history_split.trigger_after_turns=3, got %#v", snap.HistorySplit.TriggerAfterTurns)
-	}
-	if snap.CurrentInputFile.Enabled == nil || *snap.CurrentInputFile.Enabled {
-		t.Fatalf("expected history split to disable current_input_file, got %#v", snap.CurrentInputFile.Enabled)
-	}
-}
-
 func TestUpdateSettingsCurrentInputFile(t *testing.T) {
 	h := newAdminTestHandler(t, `{"keys":["k1"],"history_split":{"enabled":true,"trigger_after_turns":2}}`)
 	payload := map[string]any{
@@ -239,8 +205,11 @@ func TestUpdateSettingsCurrentInputFile(t *testing.T) {
 	if snap.CurrentInputFile.MinChars != 12345 {
 		t.Fatalf("expected current_input_file.min_chars=12345, got %#v", snap.CurrentInputFile)
 	}
-	if snap.HistorySplit.Enabled == nil || *snap.HistorySplit.Enabled {
-		t.Fatalf("expected current input file to disable history_split, got %#v", snap.HistorySplit.Enabled)
+	if !h.Store.CurrentInputFileEnabled() {
+		t.Fatal("expected current input file accessor to stay enabled")
+	}
+	if h.Store.HistorySplitEnabled() {
+		t.Fatal("expected history split accessor to stay disabled")
 	}
 }
 
@@ -290,7 +259,7 @@ func TestUpdateSettingsCurrentInputFilePartialUpdatePreservesMinChars(t *testing
 	}
 }
 
-func TestUpdateSettingsRejectsTwoSplitModesEnabled(t *testing.T) {
+func TestUpdateSettingsIgnoresHistorySplitPayload(t *testing.T) {
 	h := newAdminTestHandler(t, `{"keys":["k1"]}`)
 	payload := map[string]any{
 		"history_split": map[string]any{
@@ -306,8 +275,12 @@ func TestUpdateSettingsRejectsTwoSplitModesEnabled(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/admin/settings", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	h.updateSettings(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	snap := h.Store.Snapshot()
+	if snap.CurrentInputFile.Enabled == nil || !*snap.CurrentInputFile.Enabled {
+		t.Fatalf("expected current_input_file to remain enabled, got %#v", snap.CurrentInputFile.Enabled)
 	}
 }
 

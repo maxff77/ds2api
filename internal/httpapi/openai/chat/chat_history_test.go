@@ -272,14 +272,13 @@ func TestChatCompletionsSkipsHistoryWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsHistorySplitPersistsHistoryText(t *testing.T) {
+func TestChatCompletionsCurrentInputFilePersistsNeutralPrompt(t *testing.T) {
 	historyStore := newTestChatHistoryStore(t)
 	ds := &inlineUploadDSStub{}
 	h := &Handler{
 		Store: mockOpenAIConfig{
 			wideInput:           true,
-			historySplitEnabled: true,
-			historySplitTurns:   1,
+			currentInputEnabled: true,
 		},
 		Auth:        streamStatusAuthStub{},
 		DS:          ds,
@@ -308,19 +307,19 @@ func TestChatCompletionsHistorySplitPersistsHistoryText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected detail item, got %v", err)
 	}
-	if full.HistoryText == "" {
-		t.Fatalf("expected history text to be persisted")
-	}
-	if !strings.Contains(full.HistoryText, "first user turn") || !strings.Contains(full.HistoryText, "tool result") {
-		t.Fatalf("expected earlier turns in history text, got %q", full.HistoryText)
-	}
-	if strings.Contains(full.HistoryText, "latest user turn") {
-		t.Fatalf("expected latest turn to stay out of persisted history text, got %q", full.HistoryText)
+	if full.HistoryText != "" {
+		t.Fatalf("expected current input file flow to leave history text empty, got %q", full.HistoryText)
 	}
 	if len(ds.uploadCalls) != 1 {
-		t.Fatalf("expected history upload to happen, got %d", len(ds.uploadCalls))
+		t.Fatalf("expected current input upload to happen, got %d", len(ds.uploadCalls))
 	}
-	if full.HistoryText != string(ds.uploadCalls[0].Data) {
-		t.Fatalf("expected persisted history text to match uploaded HISTORY.txt contents")
+	if ds.uploadCalls[0].Filename != "IGNORE.txt" {
+		t.Fatalf("expected IGNORE.txt upload, got %q", ds.uploadCalls[0].Filename)
+	}
+	if len(full.Messages) != 1 {
+		t.Fatalf("expected compacted-context prompt to be the only persisted message, got %#v", full.Messages)
+	}
+	if !strings.Contains(full.Messages[0].Content, promptcompat.BuildOpenAICurrentInputContextPrompt()) {
+		t.Fatalf("expected compacted-context prompt to be persisted, got %#v", full.Messages[0])
 	}
 }

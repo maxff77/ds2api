@@ -122,6 +122,72 @@ test('parseToolCalls supports JSON scalar parameters', () => {
   assert.equal(calls[0].input.enabled, true);
 });
 
+test('parseToolCalls treats item-only parameter body as array', () => {
+  const payload = [
+    '<|DSML|tool_calls>',
+    '<|DSML|invoke name="AskUserQuestion">',
+    '<|DSML|parameter name="questions">',
+    '<item>',
+    '<question><![CDATA[What would you like to do next?]]></question>',
+    '<header><![CDATA[Next step]]></header>',
+    '<options>',
+    '<item><label><![CDATA[Run tests]]></label><description><![CDATA[Run the test suite]]></description></item>',
+    '<item><label><![CDATA[Other task]]></label><description><![CDATA[Something else entirely]]></description></item>',
+    '</options>',
+    '<multiSelect>false</multiSelect>',
+    '</item>',
+    '</|DSML|parameter>',
+    '</|DSML|invoke>',
+    '</|DSML|tool_calls>',
+  ].join('\n');
+  const calls = parseToolCalls(payload, ['AskUserQuestion']);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].input.questions, [
+    {
+      question: 'What would you like to do next?',
+      header: 'Next step',
+      options: [
+        { label: 'Run tests', description: 'Run the test suite' },
+        { label: 'Other task', description: 'Something else entirely' },
+      ],
+      multiSelect: false,
+    },
+  ]);
+});
+
+test('parseToolCalls treats CDATA item-only body as array', () => {
+  const todos = '<br>  <item><br>    <activeForm>Testing EnterWorktree tool</activeForm><br>    <content>Test EnterWorktree tool</content><br>    <status>in_progress</status><br>  </item><br>  <item><br>    <activeForm>Testing TodoWrite tool</activeForm><br>    <content>Test TodoWrite tool</content><br>    <status>completed</status><br>  </item><br>';
+  const payload = `<|DSML|tool_calls><|DSML|invoke name="TodoWrite"><|DSML|parameter name="todos"><![CDATA[${todos}]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>`;
+  const calls = parseToolCalls(payload, ['TodoWrite']);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].input.todos, [
+    {
+      activeForm: 'Testing EnterWorktree tool',
+      content: 'Test EnterWorktree tool',
+      status: 'in_progress',
+    },
+    {
+      activeForm: 'Testing TodoWrite tool',
+      content: 'Test TodoWrite tool',
+      status: 'completed',
+    },
+  ]);
+});
+
+test('parseToolCalls treats CDATA object fragment as object', () => {
+  const fragment = '<question><![CDATA[Pick one]]></question><options><item><label><![CDATA[A]]></label></item><item><label><![CDATA[B]]></label></item></options>';
+  const payload = `<tool_calls><invoke name="AskUserQuestion"><parameter name="questions"><![CDATA[${fragment}]]></parameter></invoke></tool_calls>`;
+  const calls = parseToolCalls(payload, ['AskUserQuestion']);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].input.questions, {
+    question: 'Pick one',
+    options: [
+      { label: 'A' },
+      { label: 'B' },
+    ],
+  });
+});
+
 test('parseToolCalls normalizes mixed DSML and XML tool tags', () => {
   // Models commonly mix DSML wrapper tags with canonical inner tags.
   const payload = '<|DSML|tool_calls><invoke name="read_file"><|DSML|parameter name="path">README.MD</|DSML|parameter></invoke></|DSML|tool_calls>';

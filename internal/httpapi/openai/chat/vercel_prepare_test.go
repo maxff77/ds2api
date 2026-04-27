@@ -10,6 +10,7 @@ import (
 
 	"ds2api/internal/auth"
 	dsclient "ds2api/internal/deepseek/client"
+	"ds2api/internal/promptcompat"
 )
 
 func TestIsVercelStreamPrepareRequest(t *testing.T) {
@@ -87,7 +88,7 @@ func TestStreamLeaseTTL(t *testing.T) {
 	}
 }
 
-func TestHandleVercelStreamPrepareAppliesHistorySplit(t *testing.T) {
+func TestHandleVercelStreamPrepareAppliesCurrentInputFile(t *testing.T) {
 	t.Setenv("VERCEL", "1")
 	t.Setenv("DS2API_VERCEL_INTERNAL_SECRET", "stream-secret")
 
@@ -95,8 +96,7 @@ func TestHandleVercelStreamPrepareAppliesHistorySplit(t *testing.T) {
 	h := &Handler{
 		Store: mockOpenAIConfig{
 			wideInput:           true,
-			historySplitEnabled: true,
-			historySplitTurns:   1,
+			currentInputEnabled: true,
 		},
 		Auth: streamStatusAuthStub{},
 		DS:   ds,
@@ -119,7 +119,7 @@ func TestHandleVercelStreamPrepareAppliesHistorySplit(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(ds.uploadCalls) != 1 {
-		t.Fatalf("expected 1 history upload, got %d", len(ds.uploadCalls))
+		t.Fatalf("expected 1 current input upload, got %d", len(ds.uploadCalls))
 	}
 
 	var body map[string]any
@@ -131,11 +131,11 @@ func TestHandleVercelStreamPrepareAppliesHistorySplit(t *testing.T) {
 		t.Fatalf("expected payload object, got %#v", body["payload"])
 	}
 	promptText, _ := payload["prompt"].(string)
-	if !strings.Contains(promptText, "latest user turn") {
-		t.Fatalf("expected latest user turn in prompt, got %s", promptText)
+	if !strings.Contains(promptText, promptcompat.BuildOpenAICurrentInputContextPrompt()) {
+		t.Fatalf("expected compacted-context prompt, got %s", promptText)
 	}
-	if strings.Contains(promptText, "first user turn") {
-		t.Fatalf("expected historical turns removed from prompt, got %s", promptText)
+	if strings.Contains(promptText, "first user turn") || strings.Contains(promptText, "latest user turn") {
+		t.Fatalf("expected original turns hidden from prompt, got %s", promptText)
 	}
 	refIDs, _ := payload["ref_file_ids"].([]any)
 	if len(refIDs) == 0 || refIDs[0] != "file-inline-1" {
@@ -143,7 +143,7 @@ func TestHandleVercelStreamPrepareAppliesHistorySplit(t *testing.T) {
 	}
 }
 
-func TestHandleVercelStreamPrepareMapsHistorySplitManagedAuthFailureTo401(t *testing.T) {
+func TestHandleVercelStreamPrepareMapsCurrentInputFileManagedAuthFailureTo401(t *testing.T) {
 	t.Setenv("VERCEL", "1")
 	t.Setenv("DS2API_VERCEL_INTERNAL_SECRET", "stream-secret")
 
@@ -153,8 +153,7 @@ func TestHandleVercelStreamPrepareMapsHistorySplitManagedAuthFailureTo401(t *tes
 	h := &Handler{
 		Store: mockOpenAIConfig{
 			wideInput:           true,
-			historySplitEnabled: true,
-			historySplitTurns:   1,
+			currentInputEnabled: true,
 		},
 		Auth: streamStatusManagedAuthStub{},
 		DS:   ds,

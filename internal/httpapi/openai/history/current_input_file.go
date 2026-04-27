@@ -28,8 +28,7 @@ func (s Service) ApplyCurrentInputFile(ctx context.Context, a *auth.RequestAuth,
 	if index < 0 {
 		return stdReq, nil
 	}
-	historySplitReached := s.Store.HistorySplitEnabled() && wouldSplitHistory(stdReq.Messages, s.Store.HistorySplitTriggerAfterTurns())
-	if len([]rune(text)) < threshold && !historySplitReached {
+	if len([]rune(text)) < threshold {
 		return stdReq, nil
 	}
 	fileText := promptcompat.BuildOpenAICurrentInputContextTranscript(stdReq.Messages)
@@ -84,11 +83,6 @@ func latestUserInputForFile(messages []any) (int, string) {
 	return -1, ""
 }
 
-func wouldSplitHistory(messages []any, triggerAfterTurns int) bool {
-	_, historyMessages := SplitOpenAIHistoryMessages(messages, triggerAfterTurns)
-	return len(historyMessages) > 0
-}
-
 func currentInputFilePrompt() string {
-	return "The current request and prior conversation context have already been provided. Answer the latest user request directly."
+	return promptcompat.BuildOpenAICurrentInputContextPrompt()
 }

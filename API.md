@@ -726,7 +726,7 @@ data: {"type":"message_stop"}
 - `compat`（`wide_input_strict_output`、`strip_reference_markers`）
 - `responses` / `embeddings`
 - `auto_delete`（`mode`：`none` / `single` / `all`；旧配置 `sessions=true` 仍按 `all` 处理）
-- `history_split`（`enabled` 固定返回 `true`、`trigger_after_turns`）
+- `current_input_file`（`enabled` 默认返回 `true`、`min_chars`）
 - `model_aliases`
 - `env_backed`、`needs_vercel_sync`
 - `toolcall` 策略已固定为 `feature_match + high`，不再通过 settings 返回或修改
@@ -741,8 +741,9 @@ data: {"type":"message_stop"}
 - `responses.store_ttl_seconds`
 - `embeddings.provider`
 - `auto_delete.mode`
-- `history_split.trigger_after_turns`（`history_split.enabled` 已全局强制开启；旧客户端传入时会被保存为 `true`）
+- `current_input_file.enabled` / `current_input_file.min_chars`
 - `model_aliases`
+- `history_split` 仅作为旧配置兼容字段保留，不再影响请求处理
 - `toolcall` 策略已固定，不再作为可写入字段
 
 ### `POST /admin/settings/password`
@@ -766,9 +767,9 @@ data: {"type":"message_stop"}
 
 请求可直接传配置对象，或使用 `{"config": {...}, "mode":"merge"}` 包裹格式。
 也支持在查询参数里传 `?mode=merge` / `?mode=replace`。
-`replace` 模式会按完整配置结构替换（保留 Vercel 同步元信息）；`merge` 模式会合并 `keys`、`api_keys`、`accounts`、`model_aliases`，并覆盖 `admin`、`runtime`、`responses`、`embeddings` 中的非空字段。`compat`、`auto_delete`、`history_split` 建议通过 `/admin/settings` 或配置文件管理；`toolcall` 相关字段会被忽略。
+`replace` 模式会按完整配置结构替换（保留 Vercel 同步元信息）；`merge` 模式会合并 `keys`、`api_keys`、`accounts`、`model_aliases`，并覆盖 `admin`、`runtime`、`responses`、`embeddings` 中的非空字段。`compat`、`auto_delete`、`current_input_file` 建议通过 `/admin/settings` 或配置文件管理；`history_split` 仅保留为旧配置兼容字段；`toolcall` 相关字段会被忽略。
 
-> 注意：`merge` 模式不会更新 `compat`、`auto_delete`、`history_split`。
+> 注意：`merge` 模式不会更新 `compat`、`auto_delete`、`current_input_file`。
 
 ### `GET /admin/config/export`
 

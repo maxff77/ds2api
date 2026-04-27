@@ -10,6 +10,7 @@ import (
 var xmlAttrPattern = regexp.MustCompile(`(?is)\b([a-z0-9_:-]+)\s*=\s*("([^"]*)"|'([^']*)')`)
 var xmlToolCallsClosePattern = regexp.MustCompile(`(?is)</tool_calls>`)
 var xmlInvokeStartPattern = regexp.MustCompile(`(?is)<invoke\b[^>]*\bname\s*=\s*("([^"]*)"|'([^']*)')`)
+var cdataBRSeparatorPattern = regexp.MustCompile(`(?i)<br\s*/?>`)
 
 func parseXMLToolCalls(text string) []ParsedToolCall {
 	wrappers := findXMLElementBlocks(text, "tool_calls")
@@ -91,7 +92,7 @@ func parseSingleXMLToolCall(block xmlElementBlock) (ParsedToolCall, bool) {
 		if paramName == "" {
 			continue
 		}
-		value := parseInvokeParameterValue(paramMatch.Body)
+		value := parseInvokeParameterValue(paramName, paramMatch.Body)
 		appendMarkupValue(input, paramName, value)
 	}
 
@@ -289,7 +290,7 @@ func parseXMLTagAttributes(raw string) map[string]string {
 	return out
 }
 
-func parseInvokeParameterValue(raw string) any {
+func parseInvokeParameterValue(paramName, raw string) any {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
@@ -298,10 +299,34 @@ func parseInvokeParameterValue(raw string) any {
 		if parsed, ok := parseJSONLiteralValue(value); ok {
 			return parsed
 		}
+		if parsed, ok := parseStructuredCDATAParameterValue(paramName, value); ok {
+			return parsed
+		}
 		return value
 	}
 	decoded := html.UnescapeString(extractRawTagValue(trimmed))
 	if strings.Contains(decoded, "<") && strings.Contains(decoded, ">") {
+		if parsedValue, ok := parseXMLFragmentValue(decoded); ok {
+			switch v := parsedValue.(type) {
+			case map[string]any:
+				if len(v) > 0 {
+					return v
+				}
+			case []any:
+				return v
+			case string:
+				text := strings.TrimSpace(v)
+				if text == "" {
+					return ""
+				}
+				if parsedText, ok := parseJSONLiteralValue(text); ok {
+					return parsedText
+				}
+				return v
+			default:
+				return v
+			}
+		}
 		if parsed := parseStructuredToolCallInput(decoded); len(parsed) > 0 {
 			if len(parsed) == 1 {
 				if rawValue, ok := parsed["_raw"].(string); ok {
@@ -315,4 +340,46 @@ func parseInvokeParameterValue(raw string) any {
 		return parsed
 	}
 	return decoded
+}
+
+func parseStructuredCDATAParameterValue(paramName, raw string) (any, bool) {
+	if preservesCDATAStringParameter(paramName) {
+		return nil, false
+	}
+	normalized := normalizeCDATAForStructuredParse(raw)
+	if !strings.Contains(normalized, "<") || !strings.Contains(normalized, ">") {
+		return nil, false
+	}
+	parsed, ok := parseXMLFragmentValue(normalized)
+	if !ok {
+		return nil, false
+	}
+	switch v := parsed.(type) {
+	case []any:
+		return v, true
+	case map[string]any:
+		if len(v) == 0 {
+			return nil, false
+		}
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
+func normalizeCDATAForStructuredParse(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	normalized := cdataBRSeparatorPattern.ReplaceAllString(raw, "\n")
+	return html.UnescapeString(strings.TrimSpace(normalized))
+}
+
+func preservesCDATAStringParameter(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "content", "file_content", "text", "prompt", "query", "command", "cmd", "script", "code", "old_string", "new_string", "pattern", "path", "file_path":
+		return true
+	default:
+		return false
+	}
 }

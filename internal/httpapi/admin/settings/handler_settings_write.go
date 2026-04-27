@@ -17,7 +17,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	adminCfg, runtimeCfg, compatCfg, responsesCfg, embeddingsCfg, autoDeleteCfg, historySplitCfg, currentInputCfg, thinkingInjCfg, aliasMap, err := parseSettingsUpdateRequest(req)
+	adminCfg, runtimeCfg, compatCfg, responsesCfg, embeddingsCfg, autoDeleteCfg, currentInputCfg, thinkingInjCfg, aliasMap, err := parseSettingsUpdateRequest(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
@@ -71,25 +71,9 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 			c.AutoDelete.Mode = autoDeleteCfg.Mode
 			c.AutoDelete.Sessions = autoDeleteCfg.Sessions
 		}
-		if historySplitCfg != nil {
-			if historySplitCfg.Enabled != nil {
-				c.HistorySplit.Enabled = historySplitCfg.Enabled
-				if *historySplitCfg.Enabled {
-					disabled := false
-					c.CurrentInputFile.Enabled = &disabled
-				}
-			}
-			if historySplitCfg.TriggerAfterTurns != nil {
-				c.HistorySplit.TriggerAfterTurns = historySplitCfg.TriggerAfterTurns
-			}
-		}
 		if currentInputCfg != nil {
 			if currentInputEnabledSet {
 				c.CurrentInputFile.Enabled = currentInputCfg.Enabled
-			}
-			if currentInputEnabledSet && currentInputCfg.Enabled != nil && *currentInputCfg.Enabled {
-				disabled := false
-				c.HistorySplit.Enabled = &disabled
 			}
 			if currentInputMinCharsSet {
 				c.CurrentInputFile.MinChars = currentInputCfg.MinChars

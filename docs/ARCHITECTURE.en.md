@@ -43,7 +43,7 @@ ds2api/
 │   │       ├── responses/                # Responses API and response store
 │   │       ├── files/                    # Files API and inline-file preprocessing
 │   │       ├── embeddings/               # Embeddings API
-│   │       ├── history/                  # OpenAI history split
+│   │       ├── history/                  # OpenAI context file handling
 │   │       └── shared/                   # OpenAI HTTP errors/models/tool formatting
 │   ├── js/                               # Node runtime related logic
 │   │   ├── chat-stream/                  # Node streaming bridge

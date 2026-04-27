@@ -68,9 +68,9 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	stdReq, err = h.applyHistorySplit(r.Context(), a, stdReq)
+	stdReq, err = h.applyCurrentInputFile(r.Context(), a, stdReq)
 	if err != nil {
-		status, message := mapHistorySplitError(err)
+		status, message := mapCurrentInputFileError(err)
 		writeOpenAIError(w, status, message)
 		return
 	}

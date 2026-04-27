@@ -712,7 +712,7 @@ Reads runtime settings and status, including:
 - `compat` (`wide_input_strict_output`, `strip_reference_markers`)
 - `responses` / `embeddings`
 - `auto_delete` (`mode`: `none` / `single` / `all`; legacy `sessions=true` is still treated as `all`)
-- `history_split` (`enabled` always returns `true`, `trigger_after_turns`)
+- `current_input_file` (`enabled` defaults to `true`, plus `min_chars`)
 - `model_aliases`
 - `env_backed`, `needs_vercel_sync`
 - `toolcall` policy is fixed to `feature_match + high` and is no longer returned or editable via settings
@@ -727,8 +727,9 @@ Hot-updates runtime settings. Supported fields:
 - `responses.store_ttl_seconds`
 - `embeddings.provider`
 - `auto_delete.mode`
-- `history_split.trigger_after_turns` (`history_split.enabled` is forced on globally; legacy client writes are stored as `true`)
+- `current_input_file.enabled` / `current_input_file.min_chars`
 - `model_aliases`
+- `history_split` is retained only for legacy config compatibility and no longer affects requests
 - `toolcall` policy is fixed and is no longer writable through settings
 
 ### `POST /admin/settings/password`
@@ -752,9 +753,9 @@ Imports full config with:
 
 The request can send config directly, or wrapped as `{"config": {...}, "mode":"merge"}`.
 Query params `?mode=merge` / `?mode=replace` are also supported.
-`replace` mode replaces the full config shape while preserving Vercel sync metadata. `merge` mode merges `keys`, `api_keys`, `accounts`, and `model_aliases`, and overwrites non-empty fields under `admin`, `runtime`, `responses`, and `embeddings`. Manage `compat`, `auto_delete`, and `history_split` via `/admin/settings` or the config file; legacy `toolcall` fields are ignored.
+`replace` mode replaces the full config shape while preserving Vercel sync metadata. `merge` mode merges `keys`, `api_keys`, `accounts`, and `model_aliases`, and overwrites non-empty fields under `admin`, `runtime`, `responses`, and `embeddings`. Manage `compat`, `auto_delete`, and `current_input_file` via `/admin/settings` or the config file; `history_split` remains only for legacy compatibility; legacy `toolcall` fields are ignored.
 
-> Note: `merge` mode does not update `compat`, `auto_delete`, or `history_split`.
+> Note: `merge` mode does not update `compat`, `auto_delete`, or `current_input_file`.
 
 ### `GET /admin/config/export`
 

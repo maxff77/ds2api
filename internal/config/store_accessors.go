@@ -164,30 +164,16 @@ func (s *Store) AutoDeleteSessions() bool {
 }
 
 func (s *Store) HistorySplitEnabled() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.cfg.HistorySplit.Enabled == nil {
-		return false
-	}
-	return *s.cfg.HistorySplit.Enabled
+	return false
 }
 
 func (s *Store) HistorySplitTriggerAfterTurns() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.cfg.HistorySplit.TriggerAfterTurns == nil || *s.cfg.HistorySplit.TriggerAfterTurns <= 0 {
-		return 1
-	}
-	return *s.cfg.HistorySplit.TriggerAfterTurns
+	return 1
 }
 
 func (s *Store) CurrentInputFileEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	historySplitEnabled := s.cfg.HistorySplit.Enabled != nil && *s.cfg.HistorySplit.Enabled
-	if historySplitEnabled {
-		return false
-	}
 	if s.cfg.CurrentInputFile.Enabled == nil {
 		return true
 	}

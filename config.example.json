@@ -50,10 +50,6 @@
   "responses": {
     "store_ttl_seconds": 900
   },
-  "history_split": {
-    "enabled": false,
-    "trigger_after_turns": 1
-  },
   "current_input_file": {
     "enabled": true,
     "min_chars": 0
