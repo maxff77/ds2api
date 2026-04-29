@@ -64,8 +64,8 @@ func TestBuildOpenAICurrentInputContextTranscriptUsesInjectedFileWrapper(t *test
 	_, historyMessages := splitOpenAIHistoryMessages(historySplitTestMessages(), 1)
 	transcript := buildOpenAICurrentInputContextTranscript(historyMessages)
 
-	if !strings.HasPrefix(transcript, "[file content end]\n\n") {
-		t.Fatalf("expected injected file wrapper prefix, got %q", transcript)
+	if strings.Contains(transcript, "[file content end]") || strings.Contains(transcript, "[file content begin]") || strings.Contains(transcript, "[file name]:") {
+		t.Fatalf("expected plain transcript without file wrapper tags, got %q", transcript)
 	}
 	if !strings.Contains(transcript, "<｜begin▁of▁sentence｜>") {
 		t.Fatalf("expected serialized conversation markers, got %q", transcript)
@@ -79,9 +79,7 @@ func TestBuildOpenAICurrentInputContextTranscriptUsesInjectedFileWrapper(t *test
 	if !strings.Contains(transcript, "<|DSML|tool_calls>") {
 		t.Fatalf("expected tool calls preserved, got %q", transcript)
 	}
-	if !strings.HasSuffix(transcript, "\n[file name]: history.txt\n[file content begin]\n") {
-		t.Fatalf("expected injected file wrapper suffix, got %q", transcript)
-	}
+
 }
 
 func TestSplitOpenAIHistoryMessagesUsesLatestUserTurn(t *testing.T) {
@@ -278,8 +276,8 @@ func TestApplyCurrentInputFileUploadsFirstTurnWithInjectedWrapper(t *testing.T) 
 		t.Fatalf("unexpected upload filename: %q", upload.Filename)
 	}
 	uploadedText := string(upload.Data)
-	if !strings.HasPrefix(uploadedText, "[file content end]\n\n") {
-		t.Fatalf("expected injected file wrapper prefix, got %q", uploadedText)
+	if strings.Contains(uploadedText, "[file content end]") || strings.Contains(uploadedText, "[file content begin]") || strings.Contains(uploadedText, "[file name]:") {
+		t.Fatalf("expected uploaded transcript without file wrapper tags, got %q", uploadedText)
 	}
 	if !strings.Contains(uploadedText, "<｜begin▁of▁sentence｜><｜User｜>first turn content that is long enough") {
 		t.Fatalf("expected serialized current user turn markers, got %q", uploadedText)
@@ -287,9 +285,7 @@ func TestApplyCurrentInputFileUploadsFirstTurnWithInjectedWrapper(t *testing.T) 
 	if !strings.Contains(uploadedText, promptcompat.ThinkingInjectionMarker) {
 		t.Fatalf("expected thinking injection in current input file, got %q", uploadedText)
 	}
-	if !strings.HasSuffix(uploadedText, "\n[file name]: history.txt\n[file content begin]\n") {
-		t.Fatalf("expected injected file wrapper suffix, got %q", uploadedText)
-	}
+
 	if strings.Contains(out.FinalPrompt, "first turn content that is long enough") {
 		t.Fatalf("expected current input text to be replaced in live prompt, got %s", out.FinalPrompt)
 	}
@@ -418,8 +414,8 @@ func TestChatCompletionsCurrentInputFileUploadsContextAndKeepsNeutralPrompt(t *t
 		t.Fatalf("unexpected purpose: %q", upload.Purpose)
 	}
 	historyText := string(upload.Data)
-	if !strings.Contains(historyText, "[file content end]") || !strings.Contains(historyText, "[file name]: history.txt") {
-		t.Fatalf("expected injected history.txt wrapper, got %s", historyText)
+	if strings.Contains(historyText, "[file content end]") || strings.Contains(historyText, "[file content begin]") || strings.Contains(historyText, "[file name]:") {
+		t.Fatalf("expected plain history transcript without wrapper tags, got %s", historyText)
 	}
 	if !strings.Contains(historyText, "latest user turn") {
 		t.Fatalf("expected full context to include latest turn, got %s", historyText)

@@ -1,7 +1,6 @@
 package promptcompat
 
 import (
-	"fmt"
 	"strings"
 
 	"ds2api/internal/prompt"
@@ -32,5 +31,5 @@ func buildOpenAIInjectedFileTranscript(messages []any) string {
 	if transcript == "" {
 		return ""
 	}
-	return fmt.Sprintf("[file content end]\n\n%s\n\n[file name]: %s\n[file content begin]\n", transcript, CurrentInputContextFilename)
+	return transcript
 }

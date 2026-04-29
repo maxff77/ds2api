@@ -259,16 +259,11 @@ OpenAI 文件相关实现：
 - 旧历史拆分兼容壳：
   [internal/httpapi/openai/history/history_split.go](../internal/httpapi/openai/history/history_split.go)
 
-当前输入转文件启用并触发时，上传文件的真实文件名是 `history.txt`，文件内容是完整 `messages` 上下文；它仍会先用 OpenAI 消息标准化和 DeepSeek 角色标记序列化，再包进 `history.txt` 文件边界里：
+当前输入转文件启用并触发时，上传文件的真实文件名是 `history.txt`，文件内容是完整 `messages` 上下文；它仍会先用 OpenAI 消息标准化和 DeepSeek 角色标记序列化，并直接作为 `history.txt` 的纯文本内容上传（不再注入文件边界标签）：
 
 ```text
 [uploaded filename]: history.txt
-[file content end]
-
 <｜begin▁of▁sentence｜><｜System｜>...<｜User｜>...<｜Assistant｜>...<｜Tool｜>...<｜User｜>...
-
-[file name]: history.txt
-[file content begin]
 ```
 
 开启后，请求的 live prompt 不再直接内联完整上下文，而是保留一个 user role 的短提示，提示模型基于已提供上下文直接回答最新请求；上传后的 `file_id` 会进入 `ref_file_ids`。

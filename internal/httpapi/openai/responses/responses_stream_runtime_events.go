@@ -45,7 +45,7 @@ func (s *responsesStreamRuntime) processToolStreamEvents(events []toolstream.Eve
 	for _, evt := range events {
 		if emitContent && evt.Content != "" {
 			cleaned := cleanVisibleOutput(evt.Content, s.stripReferenceMarkers)
-			if cleaned != "" && !(s.searchEnabled && sse.IsCitation(cleaned)) {
+			if cleaned != "" && (!s.searchEnabled || !sse.IsCitation(cleaned)) {
 				s.emitTextDelta(cleaned)
 			}
 		}

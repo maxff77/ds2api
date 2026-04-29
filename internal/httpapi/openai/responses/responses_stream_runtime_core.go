@@ -150,7 +150,7 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 	finalThinking := s.thinking.String()
 	finalToolDetectionThinking := s.toolDetectionThinking.String()
 	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
-	textParsed := detectAssistantToolCalls(s.rawText.String(), s.rawThinking.String(), finalToolDetectionThinking, s.toolNames)
+	textParsed := detectAssistantToolCalls(s.rawText.String(), finalText, s.rawThinking.String(), finalToolDetectionThinking, s.toolNames)
 	detected := textParsed.Calls
 	s.logToolPolicyRejections(textParsed)
 
