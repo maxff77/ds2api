@@ -16,12 +16,13 @@ type chatStreamRuntime struct {
 	rc       *http.ResponseController
 	canFlush bool
 
-	completionID string
-	created      int64
-	model        string
-	finalPrompt  string
-	toolNames    []string
-	toolsRaw     any
+	completionID  string
+	created       int64
+	model         string
+	finalPrompt   string
+	refFileTokens int
+	toolNames     []string
+	toolsRaw      any
 
 	thinkingEnabled       bool
 	searchEnabled         bool
@@ -222,7 +223,7 @@ func (s *chatStreamRuntime) finalize(finishReason string, deferEmptyOutput bool)
 		s.sendFailedChunk(status, message, code)
 		return true
 	}
-	usage := openaifmt.BuildChatUsageForModel(s.model, s.finalPrompt, finalThinking, finalText)
+	usage := openaifmt.BuildChatUsageForModel(s.model, s.finalPrompt, finalThinking, finalText, s.refFileTokens)
 	s.finalFinishReason = finishReason
 	s.finalUsage = usage
 	s.sendChunk(openaifmt.BuildChatStreamChunk(

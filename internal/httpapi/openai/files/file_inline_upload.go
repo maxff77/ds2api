@@ -39,11 +39,12 @@ func (e *inlineFileUploadError) Error() string {
 }
 
 type inlineUploadState struct {
-	ctx          context.Context
-	handler      *Handler
-	auth         *auth.RequestAuth
-	uploadedByID map[string]string
-	uploadCount  int
+	ctx             context.Context
+	handler         *Handler
+	auth            *auth.RequestAuth
+	uploadedByID    map[string]string
+	uploadCount     int
+	inlineFileBytes int
 }
 
 type inlineDecodedFile struct {
@@ -74,6 +75,9 @@ func (h *Handler) PreprocessInlineFileInputs(ctx context.Context, a *auth.Reques
 	}
 	if refIDs := promptcompat.CollectOpenAIRefFileIDs(req); len(refIDs) > 0 {
 		req["ref_file_ids"] = stringsToAnySlice(refIDs)
+	}
+	if state.inlineFileBytes > 0 {
+		req["_inline_file_bytes"] = state.inlineFileBytes
 	}
 	return nil
 }
@@ -143,6 +147,7 @@ func (s *inlineUploadState) tryUploadBlock(block map[string]any) (map[string]any
 		return nil, true, &inlineFileUploadError{status: http.StatusInternalServerError, message: "Failed to upload inline file.", err: err}
 	}
 	s.uploadCount++
+	s.inlineFileBytes += len(decoded.Data)
 	replacement := map[string]any{
 		"type":    decoded.ReplacementType,
 		"file_id": fileID,

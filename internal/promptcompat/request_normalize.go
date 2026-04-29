@@ -53,6 +53,7 @@ func NormalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID 
 		Thinking:        thinkingEnabled,
 		Search:          searchEnabled,
 		RefFileIDs:      refFileIDs,
+		RefFileTokens:   estimateInlineFileTokens(req),
 		PassThrough:     passThrough,
 	}, nil
 }
@@ -114,6 +115,7 @@ func NormalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 		Thinking:        thinkingEnabled,
 		Search:          searchEnabled,
 		RefFileIDs:      refFileIDs,
+		RefFileTokens:   estimateInlineFileTokens(req),
 		PassThrough:     passThrough,
 	}, nil
 }
@@ -357,4 +359,31 @@ func namesToSet(names []string) map[string]struct{} {
 		return nil
 	}
 	return out
+}
+
+// estimateInlineFileTokens extracts the byte count stashed by PreprocessInlineFileInputs
+// and converts it to a conservative token estimate. Inline files are typically images or
+// documents that the upstream model will process; we use bytes/3 (rather than bytes/4)
+// as a slightly pessimistic approximation so the returned context token count stays
+// safely above the real value.
+func estimateInlineFileTokens(req map[string]any) int {
+	raw, ok := req["_inline_file_bytes"]
+	if !ok {
+		return 0
+	}
+	var bytes int
+	switch v := raw.(type) {
+	case int:
+		bytes = v
+	case int64:
+		bytes = int(v)
+	case float64:
+		bytes = int(v)
+	default:
+		return 0
+	}
+	if bytes <= 0 {
+		return 0
+	}
+	return bytes / 3
 }

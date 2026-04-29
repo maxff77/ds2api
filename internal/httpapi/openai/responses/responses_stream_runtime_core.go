@@ -18,13 +18,14 @@ type responsesStreamRuntime struct {
 	rc       *http.ResponseController
 	canFlush bool
 
-	responseID  string
-	model       string
-	finalPrompt string
-	toolNames   []string
-	toolsRaw    any
-	traceID     string
-	toolChoice  promptcompat.ToolChoicePolicy
+	responseID    string
+	model         string
+	finalPrompt   string
+	refFileTokens int
+	toolNames     []string
+	toolsRaw      any
+	traceID       string
+	toolChoice    promptcompat.ToolChoicePolicy
 
 	thinkingEnabled       bool
 	searchEnabled         bool

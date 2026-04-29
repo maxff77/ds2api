@@ -2,8 +2,8 @@ package openai
 
 import "ds2api/internal/util"
 
-func BuildChatUsageForModel(model, finalPrompt, finalThinking, finalText string) map[string]any {
-	promptTokens := util.CountPromptTokens(finalPrompt, model)
+func BuildChatUsageForModel(model, finalPrompt, finalThinking, finalText string, refFileTokens int) map[string]any {
+	promptTokens := util.CountPromptTokens(finalPrompt, model) + refFileTokens
 	reasoningTokens := util.CountOutputTokens(finalThinking, model)
 	completionTokens := util.CountOutputTokens(finalText, model)
 	return map[string]any{
@@ -17,11 +17,11 @@ func BuildChatUsageForModel(model, finalPrompt, finalThinking, finalText string)
 }
 
 func BuildChatUsage(finalPrompt, finalThinking, finalText string) map[string]any {
-	return BuildChatUsageForModel("", finalPrompt, finalThinking, finalText)
+	return BuildChatUsageForModel("", finalPrompt, finalThinking, finalText, 0)
 }
 
-func BuildResponsesUsageForModel(model, finalPrompt, finalThinking, finalText string) map[string]any {
-	promptTokens := util.CountPromptTokens(finalPrompt, model)
+func BuildResponsesUsageForModel(model, finalPrompt, finalThinking, finalText string, refFileTokens int) map[string]any {
+	promptTokens := util.CountPromptTokens(finalPrompt, model) + refFileTokens
 	reasoningTokens := util.CountOutputTokens(finalThinking, model)
 	completionTokens := util.CountOutputTokens(finalText, model)
 	return map[string]any{
@@ -32,5 +32,5 @@ func BuildResponsesUsageForModel(model, finalPrompt, finalThinking, finalText st
 }
 
 func BuildResponsesUsage(finalPrompt, finalThinking, finalText string) map[string]any {
-	return BuildResponsesUsageForModel("", finalPrompt, finalThinking, finalText)
+	return BuildResponsesUsageForModel("", finalPrompt, finalThinking, finalText, 0)
 }

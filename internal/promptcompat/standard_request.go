@@ -19,6 +19,7 @@ type StandardRequest struct {
 	Thinking                bool
 	Search                  bool
 	RefFileIDs              []string
+	RefFileTokens           int
 	PassThrough             map[string]any
 }
 
