@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -177,6 +178,7 @@ func (r *Resolver) MarkTokenInvalid(a *RequestAuth) {
 	if !a.UseConfigToken || a.AccountID == "" {
 		return
 	}
+	slog.Warn("ds_token_invalid", "account", a.AccountID, "reason", "token_invalid")
 	a.Account.Token = ""
 	a.DeepSeekToken = ""
 	r.clearTokenRefreshMark(a.AccountID)

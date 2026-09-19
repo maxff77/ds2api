@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"log/slog"
 
 	"ds2api/internal/config"
 )
@@ -57,6 +58,7 @@ func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Acc
 		}
 		p.inUse[target]++
 		p.bumpQueue(target)
+		slog.Info("ds_acquire", "account", target, "inflight", p.inUse[target])
 		return acc, true
 	}
 
@@ -75,6 +77,7 @@ func (p *Pool) tryAcquire(exclude map[string]bool) (config.Account, bool) {
 		}
 		p.inUse[id]++
 		p.bumpQueue(id)
+		slog.Info("ds_acquire", "account", id, "inflight", p.inUse[id])
 		return acc, true
 	}
 	return config.Account{}, false
