@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -62,5 +63,94 @@ func TestMarkTokenInvalidStaysSilentForUnmanagedCaller(t *testing.T) {
 
 	if strings.Contains(buf.String(), "ds_token_invalid") {
 		t.Fatalf("unmanaged caller must not emit an account event, got: %s", buf.String())
+	}
+}
+
+func TestMarkTokenInvalidQuarantinesTheAccount(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[
+			{"email":"acc1@example.com","token":"token1"},
+			{"email":"acc2@example.com","token":"token2"}
+		]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		return "", nil
+	})
+
+	r.MarkTokenInvalid(&RequestAuth{
+		AccountID:      "acc1@example.com",
+		UseConfigToken: true,
+		DeepSeekToken:  "token1",
+		Account:        config.Account{Email: "acc1@example.com", Token: "token1"},
+	})
+
+	if _, ok := pool.Acquire("acc1@example.com", nil); ok {
+		t.Fatal("an account whose token was judged invalid must leave rotation")
+	}
+	records := pool.QuarantinedAccounts()
+	if len(records) != 1 || records[0].AccountID != "acc1@example.com" {
+		t.Fatalf("expected the account to be quarantined, got %+v", records)
+	}
+}
+
+// The production path never calls MarkTokenInvalid: on an auth failure the
+// client asks for a refresh and, when that fails, switches account. A refresh
+// that fails means no working token can be obtained for this account, which is
+// what a suspension looks like from here.
+func TestFailedRefreshQuarantinesTheAccount(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[
+			{"email":"acc1@example.com","password":"p","token":"token1"},
+			{"email":"acc2@example.com","password":"p","token":"token2"}
+		]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		return "", errors.New("account suspended")
+	})
+
+	a := &RequestAuth{
+		AccountID:      "acc1@example.com",
+		UseConfigToken: true,
+		DeepSeekToken:  "token1",
+		Account:        config.Account{Email: "acc1@example.com", Password: "p", Token: "token1"},
+	}
+	if r.RefreshToken(context.Background(), a) {
+		t.Fatal("expected the refresh to fail")
+	}
+
+	if _, ok := pool.Acquire("acc1@example.com", nil); ok {
+		t.Fatal("an account that cannot obtain a token must leave rotation")
+	}
+}
+
+func TestSuccessfulRefreshLeavesAccountInRotation(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"acc1@example.com","password":"p","token":"token1"}]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		return "fresh-token", nil
+	})
+
+	a := &RequestAuth{
+		AccountID:      "acc1@example.com",
+		UseConfigToken: true,
+		DeepSeekToken:  "token1",
+		Account:        config.Account{Email: "acc1@example.com", Password: "p", Token: "token1"},
+	}
+	if !r.RefreshToken(context.Background(), a) {
+		t.Fatal("expected the refresh to succeed")
+	}
+
+	if _, ok := pool.Acquire("acc1@example.com", nil); !ok {
+		t.Fatal("an ordinary token refresh must not quarantine the account")
 	}
 }

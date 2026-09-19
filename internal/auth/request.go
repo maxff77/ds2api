@@ -169,6 +169,14 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 	a.Account.Token = ""
 	if err := r.loginAndPersist(ctx, a); err != nil {
 		config.Logger.Error("[refresh_token] failed", "account", a.AccountID, "error", err)
+		// No working token can be obtained for this account, which is what a
+		// suspension looks like from here. Hold it out of rotation so requests
+		// are not burned on it; the window lapses on its own, and the operator
+		// can release it from the admin panel after replacing the token.
+		slog.Warn("ds_token_invalid", "account", a.AccountID, "reason", "refresh_failed")
+		if r.Pool != nil {
+			r.Pool.QuarantineAccount(a.AccountID, "refresh_failed")
+		}
 		return false
 	}
 	return true
@@ -179,6 +187,9 @@ func (r *Resolver) MarkTokenInvalid(a *RequestAuth) {
 		return
 	}
 	slog.Warn("ds_token_invalid", "account", a.AccountID, "reason", "token_invalid")
+	if r.Pool != nil {
+		r.Pool.QuarantineAccount(a.AccountID, "token_invalid")
+	}
 	a.Account.Token = ""
 	a.DeepSeekToken = ""
 	r.clearTokenRefreshMark(a.AccountID)

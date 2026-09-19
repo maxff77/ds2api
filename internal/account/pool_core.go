@@ -3,6 +3,7 @@ package account
 import (
 	"sort"
 	"sync"
+	"time"
 
 	"ds2api/internal/config"
 )
@@ -17,6 +18,7 @@ type Pool struct {
 	recommendedConcurrency int
 	maxQueueSize           int
 	globalMaxInflight      int
+	quarantine             *Quarantine
 }
 
 func NewPool(store *config.Store) *Pool {
@@ -28,6 +30,7 @@ func NewPool(store *config.Store) *Pool {
 		store:                 store,
 		inUse:                 map[string]int{},
 		maxInflightPerAccount: maxPer,
+		quarantine:            NewQuarantine(24 * time.Hour),
 	}
 	p.Reset()
 	return p
@@ -129,4 +132,25 @@ func (p *Pool) Status() map[string]any {
 		"waiting":                  len(p.waiters),
 		"max_queue_size":           p.maxQueueSize,
 	}
+}
+
+// QuarantineAccount holds accountID out of rotation until its window lapses.
+func (p *Pool) QuarantineAccount(accountID, reason string) {
+	p.quarantine.Ban(accountID, reason)
+	p.mu.Lock()
+	p.notifyWaiterLocked()
+	p.mu.Unlock()
+}
+
+// ReleaseAccount returns a quarantined account to rotation immediately.
+func (p *Pool) ReleaseAccount(accountID string) {
+	p.quarantine.Release(accountID)
+	p.mu.Lock()
+	p.notifyWaiterLocked()
+	p.mu.Unlock()
+}
+
+// QuarantinedAccounts lists every account currently held out of rotation.
+func (p *Pool) QuarantinedAccounts() []BanRecord {
+	return p.quarantine.List()
 }
