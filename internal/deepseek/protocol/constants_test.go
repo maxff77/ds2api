@@ -1,56 +1,58 @@
 package protocol
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 )
 
-func TestSharedConstantsLoaded(t *testing.T) {
-	cfg := sharedConstants{}
-	if err := json.Unmarshal(sharedConstantsJSON, &cfg); err != nil {
-		t.Fatalf("failed to parse shared constants: %v", err)
+// The TLS handshake claims desktop Chrome. Every header must tell the same
+// story: a Chrome hello paired with a mobile-app User-Agent is a combination
+// that exists nowhere in the wild, which is what made the client trivially
+// fingerprintable.
+func TestUserAgentIsDesktopChrome(t *testing.T) {
+	ua := BaseHeaders["User-Agent"]
+
+	if !strings.HasPrefix(ua, "Mozilla/5.0") {
+		t.Fatalf("expected a browser User-Agent, got %q", ua)
 	}
-	client := normalizeClientConstants(cfg.Client)
-	if ClientVersion != client.Version {
-		t.Fatalf("unexpected client version=%q", ClientVersion)
+	if !strings.Contains(ua, "Chrome/") {
+		t.Fatalf("expected a Chrome User-Agent to match the TLS hello, got %q", ua)
 	}
-	wantUserAgent := client.Name + "/" + client.Version + " Android/" + client.AndroidAPILevel
-	if BaseHeaders["User-Agent"] != wantUserAgent {
-		t.Fatalf("unexpected user agent=%q", BaseHeaders["User-Agent"])
-	}
-	if BaseHeaders["x-client-platform"] != "android" {
-		t.Fatalf("unexpected base header x-client-platform=%q", BaseHeaders["x-client-platform"])
-	}
-	if BaseHeaders["x-client-version"] != ClientVersion {
-		t.Fatalf("unexpected base header x-client-version=%q", BaseHeaders["x-client-version"])
-	}
-	if BaseHeaders["Content-Type"] != "application/json" {
-		t.Fatalf("unexpected base header Content-Type=%q", BaseHeaders["Content-Type"])
-	}
-	if len(SkipContainsPatterns) == 0 {
-		t.Fatal("expected skip contains patterns to be loaded")
-	}
-	if _, ok := SkipExactPathSet["response/search_status"]; !ok {
-		t.Fatal("expected response/search_status in exact skip path set")
+	if strings.Contains(ua, "Android") || strings.Contains(ua, "DeepSeek/") {
+		t.Fatalf("mobile-app wording contradicts the desktop Chrome hello: %q", ua)
 	}
 }
 
-func TestClientHeadersDerivedFromSharedVersion(t *testing.T) {
-	client := normalizeClientConstants(clientConstants{
-		Name:            "DeepSeek",
-		Platform:        "android",
-		Version:         "9.8.7",
-		AndroidAPILevel: "35",
-		Locale:          "zh_CN",
-	})
-	headers := buildBaseHeaders(client, map[string]string{
-		"User-Agent":       "stale",
-		"x-client-version": "stale",
-	})
-	if headers["User-Agent"] != "DeepSeek/9.8.7 Android/35" {
-		t.Fatalf("unexpected derived user agent=%q", headers["User-Agent"])
+func TestClientHintsArePresent(t *testing.T) {
+	for _, header := range []string{
+		"sec-ch-ua",
+		"sec-ch-ua-mobile",
+		"sec-ch-ua-platform",
+		"sec-fetch-dest",
+		"sec-fetch-mode",
+		"sec-fetch-site",
+	} {
+		if strings.TrimSpace(BaseHeaders[header]) == "" {
+			t.Fatalf("a Chrome hello without the %q client hint is its own mismatch", header)
+		}
 	}
-	if headers["x-client-version"] != "9.8.7" {
-		t.Fatalf("unexpected derived client version=%q", headers["x-client-version"])
+}
+
+func TestMobileAppHeadersAreGone(t *testing.T) {
+	for _, header := range []string{"x-client-platform", "x-client-version", "x-client-locale"} {
+		if _, exists := BaseHeaders[header]; exists {
+			t.Fatalf("mobile-app header %q must not be sent by a browser client", header)
+		}
+	}
+}
+
+// The uTLS profile targets one Chrome major; the User-Agent and the client
+// hint must name that same major or the three disagree.
+func TestChromeMajorAgreesAcrossHeaders(t *testing.T) {
+	if !strings.Contains(BaseHeaders["User-Agent"], "Chrome/"+ChromeMajorVersion+".") {
+		t.Fatalf("User-Agent must name Chrome %s, got %q", ChromeMajorVersion, BaseHeaders["User-Agent"])
+	}
+	if !strings.Contains(BaseHeaders["sec-ch-ua"], `"`+ChromeMajorVersion+`"`) {
+		t.Fatalf("sec-ch-ua must name Chrome %s, got %q", ChromeMajorVersion, BaseHeaders["sec-ch-ua"])
 	}
 }

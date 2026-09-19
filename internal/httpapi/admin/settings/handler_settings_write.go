@@ -28,6 +28,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	accountMaxPerHourSet := hasNestedSettingsKey(req, "runtime", "account_max_per_hour")
 	currentInputEnabledSet := hasNestedSettingsKey(req, "current_input_file", "enabled")
 	currentInputMinCharsSet := hasNestedSettingsKey(req, "current_input_file", "min_chars")
 	thinkingInjectionEnabledSet := hasNestedSettingsKey(req, "thinking_injection", "enabled")
@@ -51,6 +52,9 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if runtimeCfg.TokenRefreshIntervalHours > 0 {
 				c.Runtime.TokenRefreshIntervalHours = runtimeCfg.TokenRefreshIntervalHours
+			}
+			if accountMaxPerHourSet {
+				c.Runtime.AccountMaxPerHour = runtimeCfg.AccountMaxPerHour
 			}
 		}
 		if responsesCfg != nil && responsesCfg.StoreTTLSeconds > 0 {

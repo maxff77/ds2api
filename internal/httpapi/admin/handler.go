@@ -6,6 +6,7 @@ import (
 	"ds2api/internal/chathistory"
 	adminaccounts "ds2api/internal/httpapi/admin/accounts"
 	adminauth "ds2api/internal/httpapi/admin/auth"
+	adminbans "ds2api/internal/httpapi/admin/bans"
 	adminconfig "ds2api/internal/httpapi/admin/configmgmt"
 	admindevcapture "ds2api/internal/httpapi/admin/devcapture"
 	adminhistory "ds2api/internal/httpapi/admin/history"
@@ -36,6 +37,7 @@ func RegisterRoutes(r chi.Router, h *Handler) {
 	vercelHandler := &adminvercel.Handler{Store: deps.Store, Pool: deps.Pool, DS: deps.DS, OpenAI: deps.OpenAI, ChatHistory: deps.ChatHistory}
 	historyHandler := &adminhistory.Handler{Store: deps.Store, Pool: deps.Pool, DS: deps.DS, OpenAI: deps.OpenAI, ChatHistory: deps.ChatHistory}
 	devCaptureHandler := &admindevcapture.Handler{Store: deps.Store, Pool: deps.Pool, DS: deps.DS, OpenAI: deps.OpenAI, ChatHistory: deps.ChatHistory}
+	bansHandler := &adminbans.Handler{Pool: deps.Pool}
 	versionHandler := &adminversion.Handler{Store: deps.Store, Pool: deps.Pool, DS: deps.DS, OpenAI: deps.OpenAI, ChatHistory: deps.ChatHistory}
 
 	adminauth.RegisterPublicRoutes(r, authHandler)
@@ -51,6 +53,7 @@ func RegisterRoutes(r chi.Router, h *Handler) {
 		admindevcapture.RegisterRoutes(pr, devCaptureHandler)
 		adminhistory.RegisterRoutes(pr, historyHandler)
 		adminversion.RegisterRoutes(pr, versionHandler)
+		adminbans.RegisterRoutes(pr, bansHandler)
 	})
 }
 

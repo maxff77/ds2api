@@ -3,6 +3,7 @@ package account
 import (
 	"sort"
 	"sync"
+	"time"
 
 	"ds2api/internal/config"
 )
@@ -17,17 +18,23 @@ type Pool struct {
 	recommendedConcurrency int
 	maxQueueSize           int
 	globalMaxInflight      int
+	quarantine             *Quarantine
+	rateLimiter            *RateLimiter
 }
 
 func NewPool(store *config.Store) *Pool {
 	maxPer := 2
+	budget := 0
 	if store != nil {
 		maxPer = store.RuntimeAccountMaxInflight()
+		budget = store.RuntimeAccountMaxPerHour()
 	}
 	p := &Pool{
 		store:                 store,
 		inUse:                 map[string]int{},
 		maxInflightPerAccount: maxPer,
+		quarantine:            NewQuarantine(24 * time.Hour),
+		rateLimiter:           NewRateLimiter(budget),
 	}
 	p.Reset()
 	return p
@@ -52,6 +59,7 @@ func (p *Pool) Reset() {
 	}
 	if p.store != nil {
 		p.maxInflightPerAccount = p.store.RuntimeAccountMaxInflight()
+		p.rateLimiter.SetBudget(p.store.RuntimeAccountMaxPerHour())
 	} else {
 		p.maxInflightPerAccount = maxInflightFromEnv()
 	}
@@ -105,8 +113,15 @@ func (p *Pool) Status() map[string]any {
 	available := make([]string, 0, len(p.queue))
 	inUseAccounts := make([]string, 0, len(p.inUse))
 	inUseSlots := 0
+	quarantined := 0
 	for _, id := range p.queue {
-		if p.inUse[id] < p.maxInflightPerAccount {
+		if p.quarantine.Active(id) {
+			quarantined++
+			continue
+		}
+		// canAcquireIDLocked is the single gate the pool actually uses, so ask
+		// it rather than re-deriving availability and drifting from it.
+		if p.canAcquireIDLocked(id) {
 			available = append(available, id)
 		}
 	}
@@ -119,6 +134,7 @@ func (p *Pool) Status() map[string]any {
 	sort.Strings(inUseAccounts)
 	return map[string]any{
 		"available":                len(available),
+		"quarantined":              quarantined,
 		"in_use":                   inUseSlots,
 		"total":                    len(p.store.Accounts()),
 		"available_accounts":       available,
@@ -129,4 +145,32 @@ func (p *Pool) Status() map[string]any {
 		"waiting":                  len(p.waiters),
 		"max_queue_size":           p.maxQueueSize,
 	}
+}
+
+// QuarantineAccount holds accountID out of rotation until its window lapses.
+func (p *Pool) QuarantineAccount(accountID, reason string) {
+	p.quarantine.Ban(accountID, reason)
+	p.mu.Lock()
+	p.notifyWaiterLocked()
+	p.mu.Unlock()
+}
+
+// ReleaseAccount returns a quarantined account to rotation immediately.
+func (p *Pool) ReleaseAccount(accountID string) {
+	p.quarantine.Release(accountID)
+	p.mu.Lock()
+	p.notifyWaiterLocked()
+	p.mu.Unlock()
+}
+
+// QuarantinedAccounts lists every account currently held out of rotation.
+func (p *Pool) QuarantinedAccounts() []BanRecord {
+	return p.quarantine.List()
+}
+
+// ReleaseUnused returns an account that was acquired but never used to serve a
+// request, refunding the hourly budget hit taken at acquisition.
+func (p *Pool) ReleaseUnused(accountID string) {
+	p.rateLimiter.Refund(accountID)
+	p.Release(accountID)
 }

@@ -12,6 +12,7 @@ import {
     Users,
     Globe,
     History,
+    ShieldAlert,
     Loader2
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -26,6 +27,7 @@ const BatchImport = lazy(() => import('../components/BatchImport'))
 const VercelSyncContainer = lazy(() => import('../features/vercel/VercelSyncContainer'))
 const SettingsContainer = lazy(() => import('../features/settings/SettingsContainer'))
 const ProxyManagerContainer = lazy(() => import('../features/proxy/ProxyManagerContainer'))
+const BanDashboard = lazy(() => import('../features/bans/BanDashboard'))
 
 function TabLoadingFallback({ label }) {
     return (
@@ -49,6 +51,7 @@ export default function DashboardShell({ token, onLogout, config, fetchConfig, s
         { id: 'proxies', label: t('nav.proxies.label'), icon: Globe, description: t('nav.proxies.desc') },
         { id: 'test', label: t('nav.test.label'), icon: Server, description: t('nav.test.desc') },
         { id: 'history', label: t('nav.history.label'), icon: History, description: t('nav.history.desc') },
+        { id: 'bans', label: t('nav.bans.label'), icon: ShieldAlert, description: t('nav.bans.desc') },
         { id: 'import', label: t('nav.import.label'), icon: Upload, description: t('nav.import.desc') },
         { id: 'vercel', label: t('nav.vercel.label'), icon: Cloud, description: t('nav.vercel.desc') },
         { id: 'settings', label: t('nav.settings.label'), icon: SettingsIcon, description: t('nav.settings.desc') },
@@ -115,6 +118,8 @@ export default function DashboardShell({ token, onLogout, config, fetchConfig, s
                 return <ProxyManagerContainer config={config} onRefresh={fetchConfig} onMessage={showMessage} authFetch={authFetch} />
             case 'test':
                 return <ApiTesterContainer config={config} onMessage={showMessage} authFetch={authFetch} />
+            case 'bans':
+                return <BanDashboard authFetch={authFetch} onMessage={showMessage} />
             case 'history':
                 return <ChatHistoryContainer onMessage={showMessage} authFetch={authFetch} />
             case 'import':

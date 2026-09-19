@@ -84,6 +84,22 @@ func (s *Store) AdminJWTValidAfterUnix() int64 {
 	return s.cfg.Admin.JWTValidAfterUnix
 }
 
+// RuntimeAccountMaxPerHour is the per-account hourly request budget.
+// Zero disables it, which is both the default and the documented rollback.
+func (s *Store) RuntimeAccountMaxPerHour() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.AccountMaxPerHour > 0 {
+		return s.cfg.Runtime.AccountMaxPerHour
+	}
+	if raw := strings.TrimSpace(os.Getenv("DS2API_ACCOUNT_MAX_PER_HOUR")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
 func (s *Store) RuntimeAccountMaxInflight() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

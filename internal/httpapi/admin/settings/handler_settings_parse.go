@@ -75,6 +75,15 @@ func parseSettingsUpdateRequest(req map[string]any) (*config.AdminConfig, *confi
 			}
 			cfg.TokenRefreshIntervalHours = n
 		}
+		if v, exists := raw["account_max_per_hour"]; exists {
+			n := intFrom(v)
+			// Zero is meaningful here: it disables the budget and is the
+			// documented rollback, so the range allows it.
+			if err := config.ValidateIntRange("runtime.account_max_per_hour", n, 0, 100000, true); err != nil {
+				return nil, nil, nil, nil, nil, nil, nil, nil, err
+			}
+			cfg.AccountMaxPerHour = n
+		}
 		if cfg.AccountMaxInflight > 0 && cfg.GlobalMaxInflight > 0 && cfg.GlobalMaxInflight < cfg.AccountMaxInflight {
 			return nil, nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("runtime.global_max_inflight must be >= runtime.account_max_inflight")
 		}
