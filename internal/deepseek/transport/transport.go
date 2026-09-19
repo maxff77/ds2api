@@ -1,11 +1,15 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -76,12 +80,19 @@ func newRoundTripper(dialContext DialContextFunc, rootCAs *x509.CertPool) http.R
 // chromeTLSDialer presents a Chrome ClientHello. The ALPN it advertises is
 // Chrome's own and is left untouched, so the protocol that gets negotiated is
 // the protocol the handshake offered.
+//
+// When no explicit dialer is supplied the ambient HTTPS_PROXY is honoured by
+// CONNECT-tunnelling to it first. http2.Transport has no Proxy field, so
+// without this the env proxy would stop being used silently. An explicit
+// dialer means a per-account proxy is already in play and the env proxy is
+// deliberately not layered on top of it.
 func chromeTLSDialer(dialContext DialContextFunc, rootCAs *x509.CertPool) func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+	useEnvProxy := dialContext == nil
 	if dialContext == nil {
 		dialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}
 	return func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-		plainConn, err := dialContext(ctx, network, addr)
+		plainConn, err := dialPossiblyViaProxy(ctx, dialContext, network, addr, useEnvProxy)
 		if err != nil {
 			return nil, err
 		}
@@ -97,4 +108,69 @@ func chromeTLSDialer(dialContext DialContextFunc, rootCAs *x509.CertPool) func(c
 		}
 		return uConn, nil
 	}
+}
+
+// proxyForRequest resolves the ambient proxy for a request. It is a variable
+// because Go unconditionally bypasses proxies for loopback addresses, which
+// makes the tunnelling path unreachable from a test against a local server.
+var proxyForRequest = http.ProxyFromEnvironment
+
+// dialPossiblyViaProxy dials addr directly, or CONNECT-tunnels to it through
+// the ambient HTTPS_PROXY when one is configured.
+func dialPossiblyViaProxy(ctx context.Context, dialContext DialContextFunc, network, addr string, useEnvProxy bool) (net.Conn, error) {
+	if !useEnvProxy {
+		return dialContext(ctx, network, addr)
+	}
+	proxyURL, err := proxyForRequest(&http.Request{
+		URL:    &url.URL{Scheme: "https", Host: addr},
+		Header: make(http.Header),
+	})
+	if err != nil || proxyURL == nil {
+		return dialContext(ctx, network, addr)
+	}
+	conn, err := dialContext(ctx, network, proxyAddress(proxyURL))
+	if err != nil {
+		return nil, err
+	}
+	if err := connectTunnel(conn, addr, proxyURL); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func proxyAddress(proxyURL *url.URL) string {
+	if proxyURL.Port() != "" {
+		return proxyURL.Host
+	}
+	if proxyURL.Scheme == "https" {
+		return net.JoinHostPort(proxyURL.Hostname(), "443")
+	}
+	return net.JoinHostPort(proxyURL.Hostname(), "80")
+}
+
+func connectTunnel(conn net.Conn, addr string, proxyURL *url.URL) error {
+	req := &http.Request{
+		Method: http.MethodConnect,
+		URL:    &url.URL{Opaque: addr},
+		Host:   addr,
+		Header: make(http.Header),
+	}
+	if user := proxyURL.User; user != nil {
+		password, _ := user.Password()
+		req.Header.Set("Proxy-Authorization",
+			"Basic "+base64.StdEncoding.EncodeToString([]byte(user.Username()+":"+password)))
+	}
+	if err := req.Write(conn); err != nil {
+		return err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("proxy CONNECT to %s failed: %s", addr, resp.Status)
+	}
+	return nil
 }
