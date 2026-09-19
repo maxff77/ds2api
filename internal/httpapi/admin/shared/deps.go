@@ -43,7 +43,7 @@ type ConfigStore interface {
 type PoolController interface {
 	Reset()
 	Status() map[string]any
-	ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight int)
+	ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight, maxPerHour int)
 }
 
 type OpenAIChatCaller interface {

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (p *Pool) ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight int) {
+func (p *Pool) ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight, maxPerHour int) {
 	if maxInflightPerAccount <= 0 {
 		maxInflightPerAccount = 1
 	}
@@ -21,6 +21,7 @@ func (p *Pool) ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMax
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.rateLimiter.SetBudget(maxPerHour)
 	p.maxInflightPerAccount = maxInflightPerAccount
 	p.maxQueueSize = maxQueueSize
 	p.globalMaxInflight = globalMaxInflight
@@ -70,6 +71,9 @@ func (p *Pool) canAcquireIDLocked(accountID string) bool {
 		return false
 	}
 	if p.globalMaxInflight > 0 && p.currentInUseLocked() >= p.globalMaxInflight {
+		return false
+	}
+	if !p.rateLimiter.Allow(accountID) {
 		return false
 	}
 	return true

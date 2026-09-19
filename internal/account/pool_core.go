@@ -19,6 +19,7 @@ type Pool struct {
 	maxQueueSize           int
 	globalMaxInflight      int
 	quarantine             *Quarantine
+	rateLimiter            *RateLimiter
 }
 
 func NewPool(store *config.Store) *Pool {
@@ -31,6 +32,7 @@ func NewPool(store *config.Store) *Pool {
 		inUse:                 map[string]int{},
 		maxInflightPerAccount: maxPer,
 		quarantine:            NewQuarantine(24 * time.Hour),
+		rateLimiter:           NewRateLimiter(0),
 	}
 	p.Reset()
 	return p

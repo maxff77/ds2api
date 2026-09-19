@@ -58,6 +58,7 @@ func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Acc
 		}
 		p.inUse[target]++
 		p.bumpQueue(target)
+		p.rateLimiter.Record(target)
 		slog.Info("ds_acquire", "account", target, "inflight", p.inUse[target])
 		return acc, true
 	}
@@ -77,6 +78,7 @@ func (p *Pool) tryAcquire(exclude map[string]bool) (config.Account, bool) {
 		}
 		p.inUse[id]++
 		p.bumpQueue(id)
+		p.rateLimiter.Record(id)
 		slog.Info("ds_acquire", "account", id, "inflight", p.inUse[id])
 		return acc, true
 	}
