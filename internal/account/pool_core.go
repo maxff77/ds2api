@@ -53,8 +53,15 @@ func (p *Pool) Reset() {
 	ids := make([]string, 0, len(accounts))
 	for _, a := range accounts {
 		id := a.Identifier()
-		if id != "" {
-			ids = append(ids, id)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+		// An account quarantined because it could not obtain a token is
+		// recovered by the operator pasting one. Leaving it held for the rest
+		// of its window would make that fix look like it did nothing.
+		if a.Token != "" {
+			p.quarantine.Release(id)
 		}
 	}
 	if p.store != nil {

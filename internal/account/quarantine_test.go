@@ -3,6 +3,8 @@ package account
 import (
 	"testing"
 	"time"
+
+	"ds2api/internal/config"
 )
 
 func TestQuarantineHoldsAccountForBaseWindow(t *testing.T) {
@@ -195,5 +197,47 @@ func TestQuarantineKeepsLatestReasonWithoutRestriking(t *testing.T) {
 	}
 	if got := rec.Until.Sub(rec.BannedAt); got != time.Hour {
 		t.Fatalf("a reason update must not extend the window, got %v", got)
+	}
+}
+
+// Recovery path: the operator pastes a fresh token for a quarantined account.
+// Leaving it quarantined for the rest of its window would make the fix look
+// like it did not work, so a reload releases any account that now holds one.
+func TestReloadReleasesQuarantineForAccountsThatGainedAToken(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"acc1@example.com","password":"p"}]
+	}`)
+	store := config.LoadStore()
+	p := NewPool(store)
+	p.QuarantineAccount("acc1@example.com", "login_failed")
+
+	if _, ok := p.Acquire("acc1@example.com", nil); ok {
+		t.Fatal("precondition: the account should be quarantined")
+	}
+
+	if err := store.UpdateAccountToken("acc1@example.com", "fresh-token"); err != nil {
+		t.Fatalf("update token: %v", err)
+	}
+	p.Reset()
+
+	if _, ok := p.Acquire("acc1@example.com", nil); !ok {
+		t.Fatal("an account given a fresh token must return to rotation")
+	}
+}
+
+// An account still without a token stays held: nothing has changed for it.
+func TestReloadKeepsQuarantineForAccountsStillWithoutAToken(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"acc1@example.com","password":"p"}]
+	}`)
+	store := config.LoadStore()
+	p := NewPool(store)
+	p.QuarantineAccount("acc1@example.com", "login_failed")
+	p.Reset()
+
+	if _, ok := p.Acquire("acc1@example.com", nil); ok {
+		t.Fatal("an account that still cannot log in must stay quarantined")
 	}
 }
