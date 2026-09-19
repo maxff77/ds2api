@@ -44,6 +44,8 @@ type PoolController interface {
 	Reset()
 	Status() map[string]any
 	ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight, maxPerHour int)
+	QuarantinedAccounts() []account.BanRecord
+	ReleaseAccount(accountID string)
 }
 
 type OpenAIChatCaller interface {
