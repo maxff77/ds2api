@@ -22,11 +22,16 @@ const (
 	DeepSeekUploadTargetPath     = "/api/v0/file/upload_file"
 )
 
+// ChromeMajorVersion must match the Chrome major that utls.HelloChrome_Auto
+// targets in the pinned utls version. Re-check it whenever utls is upgraded:
+// the TLS hello, the User-Agent and the sec-ch-ua hint have to name the same
+// browser or the client contradicts itself again.
+const ChromeMajorVersion = "133"
+
 var defaultStaticBaseHeaders = map[string]string{
-	"Host":           "chat.deepseek.com",
-	"Accept":         "application/json",
-	"Content-Type":   "application/json",
-	"accept-charset": "UTF-8",
+	"Host":         "chat.deepseek.com",
+	"Accept":       "*/*",
+	"Content-Type": "application/json",
 }
 
 var defaultSkipContainsPatterns = []string{
@@ -50,11 +55,10 @@ var SkipContainsPatterns = cloneStringSlice(defaultSkipContainsPatterns)
 var SkipExactPathSet = toStringSet(defaultSkipExactPaths)
 
 type clientConstants struct {
-	Name            string `json:"name"`
-	Platform        string `json:"platform"`
-	Version         string `json:"version"`
-	AndroidAPILevel string `json:"android_api_level"`
-	Locale          string `json:"locale"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Version  string `json:"version"`
+	Locale   string `json:"locale"`
 }
 
 type sharedConstants struct {
@@ -91,16 +95,16 @@ func applySharedConstants(cfg sharedConstants) {
 
 func normalizeClientConstants(in clientConstants) clientConstants {
 	if in.Name == "" {
-		in.Name = "DeepSeek"
+		in.Name = "Chrome"
 	}
 	if in.Platform == "" {
-		in.Platform = "android"
+		in.Platform = "web"
 	}
-	if in.AndroidAPILevel == "" {
-		in.AndroidAPILevel = "35"
+	if in.Version == "" {
+		in.Version = ChromeMajorVersion + ".0.0.0"
 	}
 	if in.Locale == "" {
-		in.Locale = "zh_CN"
+		in.Locale = "zh-CN"
 	}
 	return in
 }
@@ -113,21 +117,11 @@ func buildBaseHeaders(client clientConstants, overrides map[string]string) map[s
 		}
 		out[k] = v
 	}
-	if client.Name != "" && client.Version != "" {
-		userAgent := client.Name + "/" + client.Version
-		if client.Platform == "android" && client.AndroidAPILevel != "" {
-			userAgent += " Android/" + client.AndroidAPILevel
-		}
-		out["User-Agent"] = userAgent
-	}
-	if client.Platform != "" {
-		out["x-client-platform"] = client.Platform
-	}
+	// A browser client sends a browser User-Agent and nothing that betrays a
+	// native app. The mobile x-client-* headers are deliberately not emitted.
 	if client.Version != "" {
-		out["x-client-version"] = client.Version
-	}
-	if client.Locale != "" {
-		out["x-client-locale"] = client.Locale
+		out["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+			"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + client.Version + " Safari/537.36"
 	}
 	return out
 }

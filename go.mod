@@ -11,7 +11,10 @@ require (
 	github.com/router-for-me/CLIProxyAPI/v6 v6.9.14
 )
 
-require github.com/dlclark/regexp2 v1.11.5 // indirect
+require (
+	github.com/dlclark/regexp2 v1.11.5 // indirect
+	golang.org/x/text v0.35.0 // indirect
+)
 
 require (
 	github.com/klauspost/compress v1.18.5 // indirect
