@@ -202,3 +202,56 @@ func TestReleaseStillSpendsBudget(t *testing.T) {
 		t.Fatal("an account that served a request must still be charged")
 	}
 }
+
+// The re-check must not cost the waiter its place in the queue. Dropping the
+// slot and re-taking it at the loop top let a newcomer claim it, so the
+// request that had waited longest was the one refused -- before its own
+// deadline, which is the opposite of the intended fairness.
+func TestWaiterKeepsQueueSlotAgainstNewcomers(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"acc1@example.com","token":"t1"}]
+	}`)
+	t.Setenv("DS2API_ACCOUNT_MAX_QUEUE", "1")
+	p := newPoolFromEnvForTest(t)
+	p.quarantine = NewQuarantine(10 * time.Second)
+	p.QuarantineAccount("acc1@example.com", "refresh_failed")
+
+	patientCtx, cancelPatient := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancelPatient()
+
+	result := make(chan bool, 1)
+	go func() {
+		_, ok := p.AcquireWait(patientCtx, "", nil)
+		result <- ok
+	}()
+	time.Sleep(50 * time.Millisecond) // let the patient waiter take the only slot
+
+	// Newcomers hammer the queue, racing for any slot the waiter lets go of.
+	stop := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+					p.AcquireWait(ctx, "", nil)
+					cancel()
+				}
+			}
+		}()
+	}
+	defer close(stop)
+
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Fatal("the patient waiter was evicted by a newcomer and failed before its own deadline")
+		}
+	case <-time.After(2 * time.Second):
+		// Still waiting at 2s, well past several re-check intervals: it kept
+		// its slot. Its own 4s deadline will end it.
+	}
+}

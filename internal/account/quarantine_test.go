@@ -177,3 +177,23 @@ func TestStatusExcludesQuarantinedAccounts(t *testing.T) {
 		t.Fatalf("expected the quarantined count to be reported, got %v", status["quarantined"])
 	}
 }
+
+// Retries within an episode must not restrike, but a more severe reason
+// arriving during the window is information worth keeping -- silently dropping
+// it would leave the admin panel showing the milder cause.
+func TestQuarantineKeepsLatestReasonWithoutRestriking(t *testing.T) {
+	q := NewQuarantine(time.Hour)
+	q.Ban("a", "refresh_failed")
+	q.Ban("a", "permanently_banned_by_upstream")
+
+	rec := q.List()[0]
+	if rec.Strikes != 1 {
+		t.Fatalf("a reason update must not count as a new episode, got %d strikes", rec.Strikes)
+	}
+	if rec.Reason != "permanently_banned_by_upstream" {
+		t.Fatalf("expected the later reason to be kept, got %q", rec.Reason)
+	}
+	if got := rec.Until.Sub(rec.BannedAt); got != time.Hour {
+		t.Fatalf("a reason update must not extend the window, got %v", got)
+	}
+}

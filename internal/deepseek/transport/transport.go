@@ -186,13 +186,20 @@ func connectTunnel(conn net.Conn, addr string, proxyURL *url.URL) error {
 	if err := req.Write(conn); err != nil {
 		return err
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("proxy CONNECT to %s failed: %s", addr, resp.Status)
+	}
+	// The reader is discarded here, so anything the proxy pipelined into the
+	// same segment would be swallowed and the TLS handshake would stall on
+	// bytes that have already been consumed. net/http guards this the same way.
+	if br.Buffered() > 0 {
+		return fmt.Errorf("proxy sent %d bytes after the CONNECT response", br.Buffered())
 	}
 	return nil
 }

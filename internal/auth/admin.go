@@ -8,12 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+
+	"ds2api/internal/config"
 	"time"
 )
 
@@ -39,7 +40,7 @@ func effectiveAdminKey(store AdminConfigReader) string {
 		return v
 	}
 	warnOnce.Do(func() {
-		slog.Warn("⚠️  DS2API_ADMIN_KEY is not set! Using insecure default \"admin\". Set a strong key in production!")
+		config.Logger.Warn("⚠️  DS2API_ADMIN_KEY is not set! Using insecure default \"admin\". Set a strong key in production!")
 	})
 	return "admin"
 }

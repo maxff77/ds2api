@@ -48,6 +48,12 @@ func (q *Quarantine) Ban(accountID, reason string) {
 	defer q.mu.Unlock()
 
 	if existing, ok := q.records[accountID]; ok && time.Now().Before(existing.Until) {
+		// Still the same episode: no new strike and no longer window. A later,
+		// possibly more severe reason is still worth recording.
+		if reason != "" && reason != existing.Reason {
+			existing.Reason = reason
+			q.records[accountID] = existing
+		}
 		return
 	}
 

@@ -53,16 +53,27 @@ func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[strin
 		p.waiters = append(p.waiters, waiter)
 		p.mu.Unlock()
 
-		// Quarantine windows and the rolling hourly budget lapse with time, but
-		// waiters are only ever woken by another request releasing. Without a
-		// periodic re-check a waiter blocked on a time-based limit sleeps until
-		// the caller's deadline -- and an inbound request carries none, so that
-		// is "hang until the client disconnects". The same re-check recovers a
-		// waiter that consumed a wakeup it could not act on.
-		//
-		// chisle: a poll, because the limits expire rather than signal. Give
-		// Quarantine and RateLimiter a "next change" timer if this ever shows up
-		// in a profile.
+		acc, acquired, woken := p.waitForSlot(ctx, waiter, target, exclude)
+		if acquired {
+			return acc, true
+		}
+		if !woken {
+			return config.Account{}, false
+		}
+		// Woken by a release: notifyWaiterLocked already dequeued us, so the
+		// loop re-queues from the top.
+	}
+}
+
+// waitForSlot blocks until the account can be acquired, the caller gives up, or
+// a release wakes this waiter.
+//
+// Quarantine windows and the rolling hourly budget lapse with time rather than
+// signalling, so the wait also re-checks on a timer. The queue slot is held
+// across those re-checks: dropping it and re-taking it at the loop top lets a
+// newcomer claim it, which refuses the caller that has waited longest.
+func (p *Pool) waitForSlot(ctx context.Context, waiter chan struct{}, target string, exclude map[string]bool) (config.Account, bool, bool) {
+	for {
 		recheck := time.NewTimer(waiterRecheckInterval)
 		select {
 		case <-ctx.Done():
@@ -70,13 +81,25 @@ func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[strin
 			p.mu.Lock()
 			p.removeWaiterLocked(waiter)
 			p.mu.Unlock()
-			return config.Account{}, false
+			return config.Account{}, false, false
+
 		case <-waiter:
 			recheck.Stop()
+			return config.Account{}, false, true
+
 		case <-recheck.C:
 			p.mu.Lock()
+			acc, ok := p.acquireLocked(target, exclude)
+			if !ok {
+				// Slot deliberately retained; keep waiting.
+				p.mu.Unlock()
+				continue
+			}
 			p.removeWaiterLocked(waiter)
+			inflight := p.inUse[acc.Identifier()]
 			p.mu.Unlock()
+			logAcquire(acc.Identifier(), inflight)
+			return acc, true, false
 		}
 	}
 }
