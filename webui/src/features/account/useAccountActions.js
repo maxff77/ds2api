@@ -9,7 +9,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const [newKey, setNewKey] = useState({ key: '', name: '', remark: '' })
     const [copiedKey, setCopiedKey] = useState(null)
     const [newAccount, setNewAccount] = useState({ name: '', remark: '', email: '', mobile: '', password: '' })
-    const [editAccount, setEditAccount] = useState({ name: '', remark: '' })
+    const [editAccount, setEditAccount] = useState({ name: '', remark: '', token: '' })
     const [loading, setLoading] = useState(false)
     const [testing, setTesting] = useState({})
     const [testingAll, setTestingAll] = useState(false)
@@ -44,7 +44,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const openAddAccount = () => {
         setShowEditAccount(false)
         setEditingAccount(null)
-        setEditAccount({ name: '', remark: '' })
+        setEditAccount({ name: '', remark: '', token: '' })
         setNewAccount({ name: '', remark: '', email: '', mobile: '', password: '' })
         setShowAddAccount(true)
     }
@@ -67,6 +67,9 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         setEditAccount({
             name: account?.name || '',
             remark: account?.remark || '',
+            // Never prefilled: the server only ever returns a masked preview,
+            // and a blank field means "leave the stored token alone".
+            token: '',
         })
         setShowEditAccount(true)
     }
@@ -74,7 +77,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const closeEditAccount = () => {
         setShowEditAccount(false)
         setEditingAccount(null)
-        setEditAccount({ name: '', remark: '' })
+        setEditAccount({ name: '', remark: '', token: '' })
     }
 
     const addKey = async () => {
@@ -168,7 +171,13 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
             const res = await apiFetch(`/admin/accounts/${encodeURIComponent(identifier)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(editAccount),
+                // Omit token entirely when blank, so an ordinary rename does
+                // not clear a token the account already holds.
+                body: JSON.stringify(
+                    editAccount.token.trim()
+                        ? editAccount
+                        : { name: editAccount.name, remark: editAccount.remark }
+                ),
             })
             if (res.ok) {
                 onMessage('success', t('accountManager.updateAccountSuccess'))

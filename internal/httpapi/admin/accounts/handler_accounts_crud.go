@@ -121,6 +121,10 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	name, nameOK := fieldStringOptional(req, "name")
 	remark, remarkOK := fieldStringOptional(req, "remark")
+	// A token obtained from a real browser session is the operator's way to
+	// make an account usable when the upstream refuses this client's
+	// programmatic login. Absent from the body, the existing one is untouched.
+	token, tokenOK := fieldStringOptional(req, "token")
 
 	err := h.Store.Update(func(c *config.Config) error {
 		for i, acc := range c.Accounts {
@@ -133,6 +137,9 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 			if remarkOK {
 				c.Accounts[i].Remark = remark
 			}
+			if tokenOK {
+				c.Accounts[i].Token = strings.TrimSpace(token)
+			}
 			return nil
 		}
 		return newRequestError("账号不存在")
@@ -144,6 +151,12 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
+	}
+	if tokenOK {
+		// Reset re-reads the store and releases the quarantine of any account
+		// that now holds a token, so a pasted token recovers the account in
+		// one step instead of leaving it held for the rest of its window.
+		h.Pool.Reset()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "total_accounts": len(h.Store.Snapshot().Accounts)})
 }
