@@ -187,3 +187,35 @@ func TestRepeatedRefreshFailuresAreOneEpisode(t *testing.T) {
 			records[0].Strikes, records[0].Until.Sub(records[0].BannedAt))
 	}
 }
+
+// An account with no token at all logs in through loginAndPersist without
+// passing through RefreshToken. Quarantining only on the refresh path left a
+// never-loggable account in rotation forever, burning a request every time it
+// came up -- the exact failure quarantine exists to stop.
+func TestFailedInitialLoginQuarantinesTheAccount(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[
+			{"email":"acc1@example.com","password":"p"},
+			{"email":"acc2@example.com","password":"p"}
+		]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		return "", errors.New("RISK_DEVICE_DETECTED")
+	})
+
+	a := &RequestAuth{
+		AccountID:      "acc1@example.com",
+		UseConfigToken: true,
+		Account:        config.Account{Email: "acc1@example.com", Password: "p"},
+	}
+	if err := r.ensureManagedToken(context.Background(), a); err == nil {
+		t.Fatal("expected the initial login to fail")
+	}
+
+	if _, ok := pool.Acquire("acc1@example.com", nil); ok {
+		t.Fatal("an account that cannot obtain a token at all must leave rotation")
+	}
+}

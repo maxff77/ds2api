@@ -152,6 +152,17 @@ func FromContext(ctx context.Context) (*RequestAuth, bool) {
 func (r *Resolver) loginAndPersist(ctx context.Context, a *RequestAuth) error {
 	token, err := r.Login(ctx, a.Account)
 	if err != nil {
+		// No working token can be obtained for this account, which is what a
+		// suspension looks like from here. Both callers land here -- the
+		// initial login for a tokenless account and the refresh of a rejected
+		// one -- so quarantining here covers an account that could never log
+		// in as well as one that stopped being able to.
+		if a.UseConfigToken && a.AccountID != "" {
+			config.Logger.Warn("ds_token_invalid", "account", a.AccountID, "reason", "login_failed")
+			if r.Pool != nil {
+				r.Pool.QuarantineAccount(a.AccountID, "login_failed")
+			}
+		}
 		return err
 	}
 	a.Account.Token = token
@@ -168,14 +179,7 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 	a.Account.Token = ""
 	if err := r.loginAndPersist(ctx, a); err != nil {
 		config.Logger.Error("[refresh_token] failed", "account", a.AccountID, "error", err)
-		// No working token can be obtained for this account, which is what a
-		// suspension looks like from here. Hold it out of rotation so requests
-		// are not burned on it; the window lapses on its own, and the operator
-		// can release it from the admin panel after replacing the token.
-		config.Logger.Warn("ds_token_invalid", "account", a.AccountID, "reason", "refresh_failed")
-		if r.Pool != nil {
-			r.Pool.QuarantineAccount(a.AccountID, "refresh_failed")
-		}
+		// loginAndPersist has already quarantined the account.
 		return false
 	}
 	return true
