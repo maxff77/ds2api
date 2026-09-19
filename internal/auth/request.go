@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -110,7 +109,7 @@ func (r *Resolver) acquireManagedRequestAuth(ctx context.Context, callerID, targ
 		if err := r.ensureManagedToken(ctx, a); err != nil {
 			lastEnsureErr = err
 			tried[a.AccountID] = true
-			r.Pool.Release(a.AccountID)
+			r.Pool.ReleaseUnused(a.AccountID)
 			if target != "" {
 				return nil, err
 			}
@@ -173,7 +172,7 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 		// suspension looks like from here. Hold it out of rotation so requests
 		// are not burned on it; the window lapses on its own, and the operator
 		// can release it from the admin panel after replacing the token.
-		slog.Warn("ds_token_invalid", "account", a.AccountID, "reason", "refresh_failed")
+		config.Logger.Warn("ds_token_invalid", "account", a.AccountID, "reason", "refresh_failed")
 		if r.Pool != nil {
 			r.Pool.QuarantineAccount(a.AccountID, "refresh_failed")
 		}
@@ -182,11 +181,17 @@ func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
 	return true
 }
 
+// MarkTokenInvalid clears a token judged invalid.
+//
+// Note: nothing in the request path calls this today -- on an auth failure the
+// client asks for a refresh and switches account instead, so the quarantine
+// trigger that matters lives in RefreshToken. Kept because it is the
+// semantically correct place should a caller ever need it.
 func (r *Resolver) MarkTokenInvalid(a *RequestAuth) {
 	if !a.UseConfigToken || a.AccountID == "" {
 		return
 	}
-	slog.Warn("ds_token_invalid", "account", a.AccountID, "reason", "token_invalid")
+	config.Logger.Warn("ds_token_invalid", "account", a.AccountID, "reason", "token_invalid")
 	if r.Pool != nil {
 		r.Pool.QuarantineAccount(a.AccountID, "token_invalid")
 	}
@@ -219,7 +224,7 @@ func (r *Resolver) SwitchAccount(ctx context.Context, a *RequestAuth) bool {
 		a.AccountID = acc.Identifier()
 		if err := r.ensureManagedToken(ctx, a); err != nil {
 			a.TriedAccounts[a.AccountID] = true
-			r.Pool.Release(a.AccountID)
+			r.Pool.ReleaseUnused(a.AccountID)
 			continue
 		}
 		return true

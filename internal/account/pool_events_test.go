@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"ds2api/internal/config"
 )
 
 // captureLogs swaps the default structured logger for a buffer for the
@@ -14,9 +16,9 @@ import (
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	prev := config.Logger
+	config.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	t.Cleanup(func() { config.Logger = prev })
 	return &buf
 }
 

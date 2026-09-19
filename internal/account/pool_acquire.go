@@ -2,15 +2,30 @@ package account
 
 import (
 	"context"
-	"log/slog"
+	"time"
 
 	"ds2api/internal/config"
 )
 
+// waiterRecheckInterval is how often a queued waiter re-evaluates limits that
+// expire on their own rather than signalling.
+const waiterRecheckInterval = 250 * time.Millisecond
+
 func (p *Pool) Acquire(target string, exclude map[string]bool) (config.Account, bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.acquireLocked(target, normalizeExclude(exclude))
+	acc, ok := p.acquireLocked(target, normalizeExclude(exclude))
+	inflight := p.inUse[acc.Identifier()]
+	p.mu.Unlock()
+	if ok {
+		logAcquire(acc.Identifier(), inflight)
+	}
+	return acc, ok
+}
+
+// logAcquire records a hand-off. Deliberately called outside the pool mutex:
+// the log sink is I/O and must not run under the pool's global lock.
+func logAcquire(accountID string, inflight int) {
+	config.Logger.Info("ds_acquire", "account", accountID, "inflight", inflight)
 }
 
 func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[string]bool) (config.Account, bool) {
@@ -25,7 +40,9 @@ func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[strin
 
 		p.mu.Lock()
 		if acc, ok := p.acquireLocked(target, exclude); ok {
+			inflight := p.inUse[acc.Identifier()]
 			p.mu.Unlock()
+			logAcquire(acc.Identifier(), inflight)
 			return acc, true
 		}
 		if !p.canQueueLocked(target, exclude) {
@@ -36,13 +53,30 @@ func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[strin
 		p.waiters = append(p.waiters, waiter)
 		p.mu.Unlock()
 
+		// Quarantine windows and the rolling hourly budget lapse with time, but
+		// waiters are only ever woken by another request releasing. Without a
+		// periodic re-check a waiter blocked on a time-based limit sleeps until
+		// the caller's deadline -- and an inbound request carries none, so that
+		// is "hang until the client disconnects". The same re-check recovers a
+		// waiter that consumed a wakeup it could not act on.
+		//
+		// chisle: a poll, because the limits expire rather than signal. Give
+		// Quarantine and RateLimiter a "next change" timer if this ever shows up
+		// in a profile.
+		recheck := time.NewTimer(waiterRecheckInterval)
 		select {
 		case <-ctx.Done():
+			recheck.Stop()
 			p.mu.Lock()
 			p.removeWaiterLocked(waiter)
 			p.mu.Unlock()
 			return config.Account{}, false
 		case <-waiter:
+			recheck.Stop()
+		case <-recheck.C:
+			p.mu.Lock()
+			p.removeWaiterLocked(waiter)
+			p.mu.Unlock()
 		}
 	}
 }
@@ -59,7 +93,6 @@ func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Acc
 		p.inUse[target]++
 		p.bumpQueue(target)
 		p.rateLimiter.Record(target)
-		slog.Info("ds_acquire", "account", target, "inflight", p.inUse[target])
 		return acc, true
 	}
 
@@ -79,7 +112,6 @@ func (p *Pool) tryAcquire(exclude map[string]bool) (config.Account, bool) {
 		p.inUse[id]++
 		p.bumpQueue(id)
 		p.rateLimiter.Record(id)
-		slog.Info("ds_acquire", "account", id, "inflight", p.inUse[id])
 		return acc, true
 	}
 	return config.Account{}, false

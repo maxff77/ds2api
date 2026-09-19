@@ -35,12 +35,21 @@ func NewQuarantine(base time.Duration) *Quarantine {
 }
 
 // Ban quarantines accountID, doubling the window for each repeat offence.
+//
+// A strike is one suspension episode, not one retry. The client retries a
+// failed token refresh several times per request and every retry reaches here,
+// so a ban while the account is already held leaves the record untouched.
+// Only a ban after the window has lapsed counts as a new episode.
 func (q *Quarantine) Ban(accountID, reason string) {
 	if q == nil || accountID == "" {
 		return
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	if existing, ok := q.records[accountID]; ok && time.Now().Before(existing.Until) {
+		return
+	}
 
 	strikes := q.records[accountID].Strikes + 1
 	window := q.base
@@ -90,4 +99,15 @@ func (q *Quarantine) List() []BanRecord {
 		out = append(out, record)
 	}
 	return out
+}
+
+// expireForTest forces an existing record's window to have lapsed, so tests can
+// drive repeat episodes without sleeping through a real backoff.
+func (q *Quarantine) expireForTest(accountID string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if record, ok := q.records[accountID]; ok {
+		record.Until = time.Now().Add(-time.Second)
+		q.records[accountID] = record
+	}
 }

@@ -106,9 +106,21 @@ func chromeTLSDialer(dialContext DialContextFunc, rootCAs *x509.CertPool) func(c
 			_ = plainConn.Close()
 			return nil, err
 		}
+		// http2.Transport does not check ALPN on a connection from a custom
+		// dialer, so without this the HTTP/2 preface would go to a peer that
+		// only offered HTTP/1.1. Fail here instead; the caller's fallback
+		// client handles the degraded path.
+		if negotiated := uConn.ConnectionState().NegotiatedProtocol; negotiated != http2.NextProtoTLS {
+			_ = uConn.Close()
+			return nil, fmt.Errorf("peer declined HTTP/2, negotiated ALPN %q", negotiated)
+		}
 		return uConn, nil
 	}
 }
+
+// connectTunnelTimeout bounds the CONNECT exchange when the caller supplied no
+// deadline of its own.
+const connectTunnelTimeout = 20 * time.Second
 
 // proxyForRequest resolves the ambient proxy for a request. It is a variable
 // because Go unconditionally bypasses proxies for loopback addresses, which
@@ -132,10 +144,20 @@ func dialPossiblyViaProxy(ctx context.Context, dialContext DialContextFunc, netw
 	if err != nil {
 		return nil, err
 	}
+	// A proxy that accepts TCP but never answers CONNECT would otherwise hang
+	// the request forever: the streaming client carries no timeout of its own.
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(connectTunnelTimeout)
+	}
+	_ = conn.SetDeadline(deadline)
 	if err := connectTunnel(conn, addr, proxyURL); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
+	// Clear it again so the tunnelled connection is not bounded by the
+	// handshake budget; long-lived streams run over this conn.
+	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 

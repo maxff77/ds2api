@@ -68,3 +68,19 @@ func (rl *RateLimiter) pruneLocked(accountID string) []time.Time {
 	rl.hits[accountID] = kept
 	return kept
 }
+
+// Refund drops the most recent hit recorded for accountID. The budget caps
+// requests actually served upstream, so an account acquired and handed back
+// without serving one must not be charged.
+func (rl *RateLimiter) Refund(accountID string) {
+	if rl == nil || accountID == "" {
+		return
+	}
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	hits := rl.hits[accountID]
+	if len(hits) == 0 {
+		return
+	}
+	rl.hits[accountID] = hits[:len(hits)-1]
+}

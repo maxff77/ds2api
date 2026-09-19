@@ -14,9 +14,9 @@ import (
 
 func TestMarkTokenInvalidEmitsEventNamingTheAccount(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	prev := config.Logger
+	config.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	t.Cleanup(func() { config.Logger = prev })
 
 	t.Setenv("DS2API_CONFIG_JSON", `{
 		"keys":["k1"],
@@ -51,9 +51,9 @@ func TestMarkTokenInvalidEmitsEventNamingTheAccount(t *testing.T) {
 // An unmanaged caller owns its own token; there is no pooled account to report.
 func TestMarkTokenInvalidStaysSilentForUnmanagedCaller(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	prev := config.Logger
+	config.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	t.Cleanup(func() { config.Logger = prev })
 
 	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["k1"],"accounts":[]}`)
 	store := config.LoadStore()
@@ -152,5 +152,38 @@ func TestSuccessfulRefreshLeavesAccountInRotation(t *testing.T) {
 
 	if _, ok := pool.Acquire("acc1@example.com", nil); !ok {
 		t.Fatal("an ordinary token refresh must not quarantine the account")
+	}
+}
+
+// The client retries a failed refresh up to maxRetries per request, and every
+// retry reaches the quarantine trigger. One failing request must still be one
+// episode, or a first failure lands straight on the maximum backoff.
+func TestRepeatedRefreshFailuresAreOneEpisode(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"acc1@example.com","password":"p","token":"token1"}]
+	}`)
+	store := config.LoadStore()
+	pool := account.NewPool(store)
+	r := NewResolver(store, pool, func(_ context.Context, _ config.Account) (string, error) {
+		return "", errors.New("account suspended")
+	})
+
+	for i := 0; i < 6; i++ {
+		r.RefreshToken(context.Background(), &RequestAuth{
+			AccountID:      "acc1@example.com",
+			UseConfigToken: true,
+			DeepSeekToken:  "token1",
+			Account:        config.Account{Email: "acc1@example.com", Password: "p", Token: "token1"},
+		})
+	}
+
+	records := pool.QuarantinedAccounts()
+	if len(records) != 1 {
+		t.Fatalf("expected 1 quarantined account, got %d", len(records))
+	}
+	if records[0].Strikes != 1 {
+		t.Fatalf("one failing request must be one strike, got %d (window %v)",
+			records[0].Strikes, records[0].Until.Sub(records[0].BannedAt))
 	}
 }
