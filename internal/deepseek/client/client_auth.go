@@ -167,20 +167,71 @@ func (c *Client) authHeaders(token string) map[string]string {
 	return headers
 }
 
+// accountFailureKeywords identify a dead, suspended or throttled account on
+// their own. Add a newly observed rejection phrase here.
+var accountFailureKeywords = []string{
+	"token",
+	"unauthorized",
+	"expired",
+	"not login",
+	"login required",
+	"invalid jwt",
+	"banned",
+	"suspended",
+	"blocked",
+	"rate limit",
+	"too many requests",
+	"封禁",
+	"未登录",
+}
+
+// scopedAccountKeywords only mean the ACCOUNT is in trouble when the message
+// is actually about the account. On their own they describe ordinary request
+// errors -- a context-length limit, a transient content anomaly -- and
+// treating those as an account failure would quarantine a healthy account.
+var scopedAccountKeywords = []string{
+	"限制",
+	"异常",
+	"restricted",
+}
+
+// accountScopeMarkers say the message is talking about the account itself.
+var accountScopeMarkers = []string{
+	"账号",
+	"帐号",
+	"account",
+}
+
 func isTokenInvalid(status int, code int, bizCode int, msg string, bizMsg string) bool {
-	msg = strings.ToLower(strings.TrimSpace(msg) + " " + strings.TrimSpace(bizMsg))
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return true
 	}
 	if code == 40001 || code == 40002 || code == 40003 || bizCode == 40001 || bizCode == 40002 || bizCode == 40003 {
 		return true
 	}
-	return strings.Contains(msg, "token") ||
-		strings.Contains(msg, "unauthorized") ||
-		strings.Contains(msg, "expired") ||
-		strings.Contains(msg, "not login") ||
-		strings.Contains(msg, "login required") ||
-		strings.Contains(msg, "invalid jwt")
+	return mentionsAccountFailure(msg, bizMsg)
+}
+
+func mentionsAccountFailure(msg string, bizMsg string) bool {
+	combined := strings.ToLower(strings.TrimSpace(msg) + " " + strings.TrimSpace(bizMsg))
+	for _, keyword := range accountFailureKeywords {
+		if strings.Contains(combined, keyword) {
+			return true
+		}
+	}
+	if !containsAnyKeyword(combined, accountScopeMarkers) {
+		return false
+	}
+	return containsAnyKeyword(combined, scopedAccountKeywords)
+}
+
+func containsAnyKeyword(haystack string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(haystack, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldAttemptRefresh(status int, code int, bizCode int, msg string, bizMsg string) bool {
